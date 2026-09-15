@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 本机自动验证脚本生成的截图与临时浏览器配置
+/.shots/
+

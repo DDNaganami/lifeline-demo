@@ -1,36 +1,100 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LifeLine 人生战略曲线 · 第一阶段原型
 
-## Getting Started
+一条可以逐年回看、逐条核对、随时追问的人生时间轴。
+当前是**纯前端可点击原型**：使用模拟数据，不接真实排盘计算、不接 AI、不做登录与数据库。
 
-First, run the development server:
+> 📄 **要交给开发同学，请直接看 [`docs/开发交接文档.md`](docs/开发交接文档.md)**：
+> 含架构、数据模型、localStorage 合约、接排盘与接 AI 的具体接入点、已知坑与验收口径。
+
+## 怎么在浏览器里看
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# 1) 构建正式版本（只需要在改动代码之后做一次）
+npm run build
+
+# 2) 启动（默认 http://localhost:3000）
+npm start
+
+# 想换端口：先设置环境变量 PORT，再执行 npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+打开后：首页填写出生信息 → 点「生成我的人生战略曲线」→ 进入仪表盘。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+> ⚠️ 已知限制：在当前这台机器的运行环境里，`npm run dev`（开发模式）的热更新长连接会被拦截，
+> 导致页面点击没有反应。**请用上面的 `npm run build` + `npm start` 方式查看**，
+> 正式版本一切正常（表单、切维度、点年份、四档反馈、追问面板均已验证通过）。
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 主路径
 
-## Learn More
+1. 首页 `/`：填写姓名（可选）、性别、出生日期、出生时辰、出生地，做基本必填校验。
+2. 仪表盘 `/dashboard`：
+   - 顶部「当前阶段卡」：当前年龄、公历年份、所属大限、阶段名称（如「责任扩大期」）。
+   - 中部「人生总曲线」：横轴年龄 + 公历年份；纵轴只分四档（高位/中上/中位/低位），**不出现具体分数**；
+     当前年龄用醒目竖线标出；过去是实线、未来是虚线；点任意年份打开年度卡片。
+     手机上曲线可横向滚动，并且会自动滚到「现在」的位置。
+   - 六个维度标签：总览、事业、财富、婚姻家庭、父母支持、健康风险；切换后同一年份位置不变。
+3. 年度卡片：年龄/公历年/大限/阶段、相对前一年的趋势、一句主判断、3-6 条可验证事件、
+   折叠的命理依据（紫微信号 / 八字信号 / 是否一致）、四档反馈、行动提示、「问陈老师」。
+4. **核对闭环（重点）**：给出四档反馈后——
+   - 「问陈老师」面板**自动滑出**，并带上一个针对该反馈的问题：
+     为什么对得上、为什么对不上、为什么没有印象（问题会随趋势与档位变化）。
+   - 面板里可以写下「这一年实际发生了什么」→ 点「存进我的核对档案」，
+     这段原文会回显在年度卡片、「我核对过的年份」和「我的人生档案」里。
+   - 同一年同一维度**只在第一次给反馈时**自动弹出，改主意换一档不会反复打扰。
+5. **继续核对**：永远指向最近一个还没核对过的年份（**从去年开始**，今年还没过完不下结论），
+   一坐下就知道该点哪一年，不用自己在曲线上找。
+6. **我的人生档案**：把用户写下的经历按年份从早到晚连成一条线，可展开、可一键复制全文。
+   经历满 3 条时默认展开。这是产品最值钱的资产——判断可以重算，用户自己的经历不能。
+7. **我核对过的年份**：按「年份」归并（一年有六个维度，否则清单会变成流水账）。
+   每一年显示六个维度的核对状态：已核对的是彩色标签（带 ✎ 表示写过经历），
+   没核对的是虚线「待核对」。点某个维度就回到那一年那一个维度继续看。
 
-To learn more about Next.js, take a look at the following resources:
+## 数据与存储
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- 曲线与卡片文案：由 `lib/mock-data.ts` 按出生信息稳定生成（同一个人每次打开结果一致）。
+- 反馈、核对档案、草稿、出生信息：只存在**你自己浏览器**的 localStorage，键名为
+  `lifeline.birth`、`lifeline.feedback`、`lifeline.notes`、`lifeline.draft`。
+- `lifeline.notes` 是产品最核心的资产：用户用自己的话写下的「这一年实际发生了什么」。
+  判断可以重算，用户自己的经历不能。
+- 点顶栏「重新填写」会清空本地的出生信息、全部反馈与核对档案。
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 目录结构
 
-## Deploy on Vercel
+```
+app/
+  page.tsx                  首页（出生信息表单）
+  dashboard/page.tsx        仪表盘页面
+  layout.tsx globals.css    全局框架与配色
+components/
+  birth-form.tsx            出生信息表单
+  dashboard-client.tsx      仪表盘主体（读取本地数据 + 状态管理）
+  life-curve.tsx            纯 SVG 人生曲线
+  dimension-tabs.tsx        六个维度切换
+  year-card.tsx             年度卡片
+  feedback-buttons.tsx      四档反馈
+  chen-teacher-panel.tsx    问陈老师追问面板（含核对档案录入）
+  continue-review.tsx       继续核对（指向下一个未核对年份）
+  reviewed-years.tsx        我核对过的年份（按年份归并）
+  life-archive.tsx          我的人生档案（按年份连成一条线）
+lib/
+  types.ts                  数据模型（TypeScript 接口）
+  mock-data.ts              模拟数据生成
+  notes.ts                  反馈 → 追问文案的生成规则
+  storage.ts                localStorage 读写
+scripts/
+  smoke.ts                  数据质量检查（node --experimental-strip-types scripts/smoke.ts）
+  verify-ui.mjs             主路径自动验证 + 截图
+  verify-review-loop.mjs    核对闭环自动验证（继续核对 → 写经历 → 档案）
+  verify-grouping.mjs       按年份归并、点维度跳回的自动验证
+  check-mobile.mjs          手机尺寸布局检查
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+以上脚本用法：先启动服务，再 `BASE_URL=http://127.0.0.1:3100 node scripts/verify-ui.mjs`。
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 下一阶段可以做什么
+
+- 接真实排盘：把 `lib/mock-data.ts` 换成真实计算模块，页面结构不用改。
+- 接 AI 追问：把 `chen-teacher-panel.tsx` 里的占位回答换成真实模型调用。
+- 反馈回流：把「四档反馈」用于校准后续年份的判断与文案。
+- 数据持久化：目前全在浏览器 localStorage，正式版需要账号 + 云端存储，
+  并让用户能导出／迁移自己的核对档案。

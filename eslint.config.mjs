@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 本机自动验证时浏览器生成的临时文件
+    ".shots/**",
   ]),
 ]);
 
