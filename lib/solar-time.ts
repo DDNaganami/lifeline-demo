@@ -31,15 +31,71 @@ export interface PlaceInfo {
   longitude: number;
   /** IANA 时区 ID，如 Asia/Shanghai */
   timezone: string;
+  /** 所属省份/地区（用于分组展示） */
+  province?: string;
+  /**
+   * 省级中心点（不是具体城市）。
+   * 用于「用户填的城市不在表里，但省份认得出来」的情况——
+   * 给一个省级的粗略校正，远好于完全不做校正（乌鲁木齐与北京差 34 度）。
+   */
+  provinceLevel?: boolean;
   /** 找不到时的标记 */
   approximate?: boolean;
 }
 
 /**
- * 城市经度表（常用城市，够原型用）。
- * 生产环境应换成完整的地理库（或让用户从地图选点），见文件末尾说明。
+ * 省级中心点（度）。
+ * ⚠️ 这些是**省的中心**，不是任何具体城市——用户报的城市不在表里时用它兜底，
+ *    并在界面上明确标注"按省份中心估算"。
+ *    宁可用一个诚实的粗略值，也不要假装精确。
  */
-const CITY_TABLE: Record<string, PlaceInfo> = {
+export const PROVINCE_CENTER: Record<string, number> = {
+  北京: 116.41, 天津: 117.19, 上海: 121.47, 重庆: 106.55,
+  河北: 114.5, 山西: 112.55, 辽宁: 123.43, 吉林: 125.32, 黑龙江: 126.53,
+  江苏: 118.8, 浙江: 120.15, 安徽: 117.28, 福建: 119.3, 江西: 115.89,
+  山东: 117.12, 河南: 113.63, 湖北: 114.31, 湖南: 112.94, 广东: 113.26,
+  广西: 108.37, 海南: 110.2, 四川: 104.07, 贵州: 106.63, 云南: 102.83,
+  西藏: 91.11, 陕西: 108.94, 甘肃: 103.83, 青海: 101.78, 宁夏: 106.23,
+  新疆: 87.62, 内蒙古: 111.75,
+  香港: 114.17, 澳门: 113.55, 台湾: 121.56,
+};
+
+/** 省份的常见写法 → 标准简称 */
+const PROVINCE_ALIAS: Record<string, string> = {
+  北京市: '北京', 天津市: '天津', 上海市: '上海', 重庆市: '重庆',
+  河北省: '河北', 山西省: '山西', 辽宁省: '辽宁', 吉林省: '吉林',
+  黑龙江省: '黑龙江', 江苏省: '江苏', 浙江省: '浙江', 安徽省: '安徽',
+  福建省: '福建', 江西省: '江西', 山东省: '山东', 河南省: '河南',
+  湖北省: '湖北', 湖南省: '湖南', 广东省: '广东', 广西壮族自治区: '广西',
+  广西省: '广西', 海南省: '海南', 四川省: '四川', 贵州省: '贵州',
+  云南省: '云南', 西藏自治区: '西藏', 陕西省: '陕西', 甘肃省: '甘肃',
+  青海省: '青海', 宁夏回族自治区: '宁夏', 新疆维吾尔自治区: '新疆',
+  内蒙古自治区: '内蒙古', 香港特别行政区: '香港', 澳门特别行政区: '澳门',
+};
+
+/** 从文本里找出省份 */
+function provinceOf(text: string): string | null {
+  const names = Object.keys(PROVINCE_ALIAS).sort((a, b) => b.length - a.length);
+  for (const n of names) {
+    if (text.includes(n)) return PROVINCE_ALIAS[n];
+  }
+  for (const p of Object.keys(PROVINCE_CENTER).sort((a, b) => b.length - a.length)) {
+    if (text.includes(p)) return p;
+  }
+  return null;
+}
+
+/**
+ * 城市经度表
+ * ---------------------------------------------------------------
+ * ⚠️ 这是**人工整理的常用城市表**，不是完整地理库。
+ *    经度数据必须准确——真太阳时全靠它，坐标错了时辰就错了，
+ *    而时辰错 → 命宫错 → 整张盘错。
+ *    所以：宁可不认识（并明确告诉用户），也不要猜一个坐标。
+ *
+ * 生产环境应换成完整地理库或让用户从地图选点，见文件末尾说明。
+ */
+export const CITY_TABLE: Record<string, PlaceInfo> = {
   // —— 中国主要城市（时区统一 Asia/Shanghai）——
   北京: { longitude: 116.41, timezone: 'Asia/Shanghai' },
   上海: { longitude: 121.47, timezone: 'Asia/Shanghai' },
@@ -134,12 +190,22 @@ const CITY_TABLE: Record<string, PlaceInfo> = {
   温哥华: { longitude: -123.12, timezone: 'America/Vancouver' },
 };
 
-/** 常见别称与拼音 → 标准中文名（键统一按小写比较） */
+/**
+ * 常见别称与拼音 → 标准中文名（键统一按小写比较）
+ *
+ * ⚠️ 这里踩过一个严重的坑，必须记下来：
+ *   曾经有一条别名 `宁: '南京'`。匹配用的是"包含"，
+ *   于是 **"西宁" 里含 "宁" → 被解析成南京 → 又因"宁波"在表里靠前 → 最后返回宁波的经度**。
+ *   结果："西宁" 和 "南宁" 都拿到了宁波的 118.8°，
+ *   而西宁实际是 101.78° —— **差 17 度 = 68 分钟**，
+ *   足以跨一个时辰，**命宫会算错，整张盘都错**。
+ *
+ *   教训有两条：
+ *   1. **不要收单字简称**（"宁""汉""津"这类会误伤别的城市名）
+ *   2. 匹配必须**精确优先、最长优先**，不能"谁先命中算谁"
+ */
 const ALIASES: Record<string, string> = {
-  // 简称
-  京: '北京', 沪: '上海', 穗: '广州', 深: '深圳', 蓉: '成都',
-  渝: '重庆', 津: '天津', 汉: '武汉', 宁: '南京', 杭: '杭州',
-  // 拼音（国内城市）
+  // 拼音（国内城市）—— 只收完整拼音，不用简称
   beijing: '北京', shanghai: '上海', shenzhen: '深圳', guangzhou: '广州',
   hangzhou: '杭州', chengdu: '成都', wuhan: '武汉', xian: '西安',
   nanjing: '南京', chongqing: '重庆', tianjin: '天津', changsha: '长沙',
@@ -169,36 +235,87 @@ const ALIASES: Record<string, string> = {
 };
 
 /**
+ * 把搜索关键字解析成标准城市名（给界面的搜索框用）。
+ *
+ * 为什么单独导出：搜索框需要"输入 hangzhou 也能找到杭州"，
+ * 但匹配逻辑必须和真正解析出生地时**用同一份别名表**——
+ * 否则会出现"搜得到但填进去解析不了"这种更糟的情况。
+ */
+export function cityFromKeyword(keyword: string): string | null {
+  const k = keyword.trim().toLowerCase();
+  if (!k) return null;
+  if (CITY_TABLE[keyword.trim()]) return keyword.trim();
+  const alias = Object.keys(ALIASES).find((a) => a.toLowerCase() === k);
+  if (alias) return ALIASES[alias];
+  return null;
+}
+
+/**
  * 从出生地文本里解析出经度与时区。
- * 支持"浙江杭州""杭州""Hangzhou"这类写法（做包含匹配）。
- * 找不到时返回默认值并标记 approximate，上层必须提示用户。
+ *
+ * 匹配顺序（**顺序本身就是正确性的一部分**）：
+ *   1. 整串精确等于某个城市名           —— 「杭州」
+ *   2. 整串精确等于某个别名/拼音        —— 「Hangzhou」
+ *   3. 城市名出现在文本里，**取最长的那个** —— 「浙江杭州」→ 杭州
+ *      （取最长是为了让「内蒙古呼和浩特」命中呼和浩特而不是别的）
+ *   4. 别名/拼音出现在文本里            —— 「zhejiang hangzhou」
+ *   5. 只认得出省份 → 用省级中心点粗校正
+ *   6. 都认不出 → 退化成东经 120° 并标记 approximate，**上层必须提示用户**
+ *
+ * 全程不做「城市名包含输入」的反向匹配 —— 那正是"西宁→宁波"事故的来源。
  */
 export function resolvePlace(birthPlace: string): PlaceInfo & { matched: string | null } {
   const raw = (birthPlace || '').trim();
+  if (!raw) {
+    return { longitude: 120, timezone: 'Asia/Shanghai', approximate: true, matched: null };
+  }
   const lower = raw.toLowerCase();
 
-  // 先查别称（键统一按小写比较，兼容 Hangzhou / hangzhou 这类写法）
-  const aliasKey = Object.keys(ALIASES).find((k) => {
-    const lk = k.toLowerCase();
-    return lk === lower || lower.includes(lk);
-  });
-  const normalized = aliasKey ? ALIASES[aliasKey] : raw;
+  // 1) 精确等于城市名
+  if (CITY_TABLE[raw]) return { ...CITY_TABLE[raw], matched: raw };
 
-  // 再查城市表：优先精确，其次包含（英文名统一按小写比较）
-  const lowerNormalized = normalized.toLowerCase();
-  if (CITY_TABLE[normalized]) {
-    return { ...CITY_TABLE[normalized], matched: normalized };
+  // 2) 精确等于别名 / 拼音
+  const exactAlias = Object.keys(ALIASES).find((k) => k.toLowerCase() === lower);
+  if (exactAlias) {
+    const target = ALIASES[exactAlias];
+    if (CITY_TABLE[target]) return { ...CITY_TABLE[target], matched: target };
   }
-  const hit = Object.keys(CITY_TABLE).find(
-    (city) =>
-      normalized.includes(city) ||
-      city.includes(normalized) ||
-      lowerNormalized.includes(city.toLowerCase()) ||
-      city.toLowerCase().includes(lowerNormalized),
-  );
-  if (hit) return { ...CITY_TABLE[hit], matched: hit };
 
-  // 兜底：按东八区、东经 120°（即不做经度修正），标记为不精确
+  // 3) 城市名出现在文本里 → 取**最长**的匹配（避免短名吃掉长名）
+  const contained = Object.keys(CITY_TABLE)
+    .filter((city) => raw.includes(city))
+    .sort((a, b) => b.length - a.length);
+  if (contained.length > 0) {
+    const hit = contained[0];
+    return { ...CITY_TABLE[hit], matched: hit };
+  }
+
+  // 4) 别名 / 拼音出现在文本里 → 同样取最长的
+  const aliasHits = Object.keys(ALIASES)
+    .filter((k) => lower.includes(k.toLowerCase()))
+    .sort((a, b) => b.length - a.length);
+  for (const k of aliasHits) {
+    const target = ALIASES[k];
+    if (CITY_TABLE[target]) return { ...CITY_TABLE[target], matched: target };
+  }
+
+  // 5) 只认得出省份 → 用省级中心点粗校正
+  //    这比退化成东经 120° 好得多（乌鲁木齐与北京差 34 度），但必须标注清楚
+  const prov = provinceOf(raw);
+  if (prov && PROVINCE_CENTER[prov] !== undefined) {
+    const lon = PROVINCE_CENTER[prov];
+    const tz = CITY_TABLE[prov]?.timezone ?? 'Asia/Shanghai';
+    return {
+      longitude: lon,
+      timezone: tz,
+      province: prov,
+      provinceLevel: true,
+      approximate: true,
+      matched: null,
+    };
+  }
+
+  // 6) 兜底：东八区、东经 120°（即不做经度修正）
   return { longitude: 120, timezone: 'Asia/Shanghai', approximate: true, matched: null };
 }
 

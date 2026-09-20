@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import PlacePicker from '@/components/place-picker';
 import { buildTrueSolarTime } from '@/lib/solar-time';
 import { saveBirth } from '@/lib/storage';
 import type { BirthInfo } from '@/lib/types';
@@ -21,32 +22,6 @@ export const TIME_OPTIONS: string[] = [
   '戌时 19:00-21:00',
   '亥时 21:00-23:00',
   '不确定',
-];
-
-const PLACE_SUGGESTIONS = [
-  '北京',
-  '上海',
-  '广州',
-  '深圳',
-  '成都',
-  '杭州',
-  '武汉',
-  '西安',
-  '南京',
-  '重庆',
-  '天津',
-  '长沙',
-  '乌鲁木齐',
-  '拉萨',
-  '香港',
-  '台北',
-  '东京',
-  '新加坡',
-  '伦敦',
-  '纽约',
-  '洛杉矶',
-  '悉尼',
-  '多伦多',
 ];
 
 const GENDERS: BirthInfo['gender'][] = ['男', '女', '其他'];
@@ -243,17 +218,10 @@ export default function BirthForm() {
         <label className={labelClass} htmlFor="birthPlace">
           出生地
         </label>
-        <input
-          id="birthPlace"
-          className={fieldClass}
-          placeholder="例如：浙江杭州 / 乌鲁木齐 / 纽约"
-          list="place-suggestions"
-          value={birthPlace}
-          onChange={(e) => setBirthPlace(e.target.value)}
-        />
+        <PlacePicker id="birthPlace" value={birthPlace} onChange={setBirthPlace} />
         <p className="mt-1.5 text-xs text-ink-3">
-          请填<strong className="text-ink-2">城市</strong>（不是「XX 省」）——
-          真太阳时要按经度校正，认不出城市就只能按东经 120° 粗略计算。
+          精确到<strong className="text-ink-2">地级市</strong>就够了 ——
+          真太阳时按经度校正，每差 1 度约 4 分钟。
         </p>
 
         {/* 真太阳时预览：填完就告诉你时辰会不会被改 */}
@@ -306,11 +274,6 @@ export default function BirthForm() {
               )}
           </div>
         )}
-        <datalist id="place-suggestions">
-          {PLACE_SUGGESTIONS.map((p) => (
-            <option key={p} value={p} />
-          ))}
-        </datalist>
       </div>
 
       {errors.length > 0 && (
