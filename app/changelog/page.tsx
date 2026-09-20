@@ -22,8 +22,12 @@ export default function ChangelogPage() {
       {/* 顶栏 */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-5">
         <div className="flex items-center gap-3">
-          <Link href="/" className="text-sm font-semibold tracking-[0.14em] text-ink">
-            LIFELINE
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-sm font-semibold tracking-[0.14em] text-ink transition hover:opacity-70"
+          >
+            <span aria-hidden>←</span>
+            <span>LIFELINE</span>
           </Link>
           <span className="text-xs text-ink-3">修改日志</span>
         </div>
@@ -32,7 +36,7 @@ export default function ChangelogPage() {
             href="/dashboard/"
             className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink-2 transition hover:border-line-strong"
           >
-            去仪表盘
+            去做排盘
           </Link>
           <Link
             href="/ambient/"

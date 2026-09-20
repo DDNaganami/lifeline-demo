@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import BirthForm from '@/components/birth-form';
 
 const STEPS = [
@@ -29,18 +30,18 @@ export default function HomePage() {
           而是一条可以逐年回看、逐条核对、随时追问的人生时间轴。
         </p>
         <div className="mt-5 flex flex-wrap gap-2">
-          <a
+          <Link
             href="/ambient/"
             className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink-2 transition hover:border-line-strong"
           >
             桌面设备模拟器
-          </a>
-          <a
+          </Link>
+          <Link
             href="/changelog/"
             className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink-2 transition hover:border-line-strong"
           >
             修改日志
-          </a>
+          </Link>
         </div>
       </header>
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import QrCode from '@/components/qr-code';
 import { buildAlmanac, buildDailyContent } from '@/lib/almanac';
 import { buildLifeLine, buildStageCard } from '@/lib/mock-data';
@@ -460,6 +461,32 @@ export default function AmbientSimulator({
 
   return (
     <div className="mx-auto w-full max-w-5xl px-5 py-8 sm:px-8">
+      {/* 返回入口：这个页面是独立路由，必须给一条回主流程的路
+          （曾经漏掉过，用户点进来就出不去了） */}
+      <nav className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+        <Link
+          href="/"
+          className="flex items-center gap-2 text-sm font-semibold tracking-[0.14em] text-ink transition hover:opacity-70"
+        >
+          <span aria-hidden>←</span>
+          <span>LIFELINE</span>
+        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/dashboard/"
+            className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink-2 transition hover:border-line-strong"
+          >
+            回到仪表盘
+          </Link>
+          <Link
+            href="/changelog/"
+            className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink-2 transition hover:border-line-strong"
+          >
+            修改日志
+          </Link>
+        </div>
+      </nav>
+
       <header className="mb-6">
         <p className="text-sm tracking-[0.2em] text-ink-3">LIFELINE · 桌面设备</p>
         <h1 className="mt-2 text-2xl font-semibold text-ink">480×480 屏幕模拟器</h1>

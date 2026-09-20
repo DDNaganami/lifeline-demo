@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ChenTeacherPanel from '@/components/chen-teacher-panel';
 import ContinueReview from '@/components/continue-review';
@@ -322,7 +323,13 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
       <div className="sticky top-0 z-30 border-b border-line bg-paper/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-5 py-3 sm:px-8">
           <div className="flex items-center gap-3">
-            <span className="text-sm font-semibold tracking-[0.14em] text-ink">LIFELINE</span>
+            <Link
+              href="/"
+              className="flex items-center gap-2 text-sm font-semibold tracking-[0.14em] text-ink transition hover:opacity-70"
+            >
+              <span aria-hidden>←</span>
+              <span>LIFELINE</span>
+            </Link>
             <span className="hidden text-xs text-ink-3 sm:inline">人生战略曲线 · 原型</span>
           </div>
           <div className="flex items-center gap-3">
@@ -330,18 +337,18 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
               {birth.name ? `${birth.name} · ` : ''}
               {formatBirth(birth)}
             </span>
-            <a
-              href="/ambient"
+            <Link
+              href="/ambient/"
               className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink-2 transition hover:border-line-strong"
             >
               桌面设备模拟器
-            </a>
-            <a
+            </Link>
+            <Link
               href="/changelog/"
               className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink-2 transition hover:border-line-strong"
             >
               修改日志
-            </a>
+            </Link>
             <button
               type="button"
               onClick={handleReset}
