@@ -49,7 +49,8 @@ await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, dev
 /** 每个页面应有：① 回首页的链接 ② 关键的去处 */
 const PAGES = [
   { path: '/', name: '首页', need: ['/ambient/', '/changelog/'] },
-  { path: '/dashboard/', name: '仪表盘', need: ['/', '/ambient/', '/changelog/'] },
+  { path: '/dashboard/', name: '仪表盘', need: ['/', '/today/', '/ambient/', '/changelog/'] },
+  { path: '/today/', name: '今日', need: ['/', '/dashboard/', '/ambient/'] },
   { path: '/ambient/', name: '设备模拟器', need: ['/', '/dashboard/', '/changelog/'] },
   { path: '/changelog/', name: '修改日志', need: ['/', '/dashboard/', '/ambient/'] },
 ];

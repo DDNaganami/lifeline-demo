@@ -434,6 +434,12 @@ function DashboardBody({
               {formatBirth(birth)}
             </span>
             <Link
+              href="/today/"
+              className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink-2 transition hover:border-line-strong"
+            >
+              今日
+            </Link>
+            <Link
               href="/ambient/"
               className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink-2 transition hover:border-line-strong"
             >

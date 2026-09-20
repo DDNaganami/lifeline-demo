@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import TodayShortcut from '@/components/today-shortcut';
 import { HOME_QUESTIONS, questionToParams } from '@/lib/home-questions';
 import { CURRENT_YEAR } from '@/lib/mock-data';
 
@@ -52,6 +53,9 @@ export default function HomePage() {
       </header>
 
       <div className="mt-10 space-y-2.5">
+        {/* 已经有出生信息的老用户，先给「今日」入口 —— 这是每天回来的理由 */}
+        <TodayShortcut />
+
         {HOME_QUESTIONS.map((q) => (
           <Link
             key={q.text}
