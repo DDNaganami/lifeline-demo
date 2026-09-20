@@ -17,6 +17,7 @@ import { buildJudgment } from '@/lib/judgment';
 import { buildLifePhases } from '@/lib/phases';
 import { buildDimensionBase } from '@/lib/dimension-base';
 import { buildSystemResponse, responseBasis } from '@/lib/response';
+import type { AskContext } from '@/lib/ask-answer';
 import {
   buildLifeLine,
   buildStageCard,
@@ -309,6 +310,26 @@ function DashboardBody({
   const currentFeedback: FeedbackType | undefined = feedbackMap[key]?.feedback;
   const currentNote = notes[key];
   const currentNoteText = currentNote && !currentNote.skipped ? currentNote.text : '';
+
+  /**
+   * 追问的上下文：把这一年的盘面事实整理好交给回答引擎。
+   * 回答引擎只负责"把已算出的盘面讲成人话"，不允许自己推命理。
+   */
+  const askContext = useMemo<AskContext>(
+    () => ({
+      year: point.year,
+      age: point.age,
+      dimension,
+      signals,
+      mainJudgment: cardWithJudgment.mainJudgment,
+      feedback: currentFeedback,
+      note: currentNoteText || undefined,
+      birthTimeConfident:
+        birth.birthTimeConfidence !== 'unknown' && !birth.birthTime.includes('不确定'),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- currentNoteText 由 notes 派生
+    [point.year, point.age, dimension, signals, cardWithJudgment.mainJudgment, currentFeedback],
+  );
 
   const historyList = Object.values(feedbackMap).sort((a, b) => b.updatedAt - a.updatedAt);
   const counts = FEEDBACK_OPTIONS.map((opt) => ({
@@ -853,6 +874,7 @@ function DashboardBody({
         savedNote={currentNoteText}
         systemResponse={systemResponse}
         basis={responseBasis(signals)}
+        askContext={askContext}
         draft={draft}
         onDraftChange={(t) => {
           setDraft(t);

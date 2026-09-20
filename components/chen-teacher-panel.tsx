@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   DIMENSION_LABEL,
   type DimensionKey,
@@ -8,6 +8,15 @@ import {
   type YearCardData,
 } from '@/lib/types';
 import type { SystemResponse } from '@/lib/response';
+import { answerQuestion, type AskContext } from '@/lib/ask-answer';
+import {
+  ASK_LIMIT,
+  CAP_MESSAGE,
+  LAST_ONE_MESSAGE,
+  canAsk,
+  consumeAsk,
+  getAskQuota,
+} from '@/lib/ask-quota';
 
 interface Props {
   open: boolean;
@@ -28,37 +37,14 @@ interface Props {
   systemResponse?: SystemResponse;
   /** 真实排盘的依据行（用于让回应显得"确实懂这年"） */
   basis?: string;
+  /** 追问回答的上下文（盘面事实，交给 lib/ask-answer.ts） */
+  askContext: AskContext;
   draft: string;
   onDraftChange: (text: string) => void;
   onSaveNote: (text: string, skipped: boolean) => void;
   onClose: () => void;
   /** 系统回应里的下一步动作 */
   onAction?: (action: 'note' | 'ask' | 'continue' | 'checkTime') => void;
-}
-
-/** 未接真实 AI 前，先给一段占位回答 */
-function placeholderAnswer(year: number, feedback?: FeedbackType): string {
-  const lines = ['（示例回答，第一阶段原型尚未接入 AI）', ''];
-  if (feedback === '没有印象') {
-    lines.push(
-      `「没有印象」本身就是有用的信息。它通常有两种来源：一是这一年确实平淡，二是这条判断写得不够具体、无法核对。`,
-      '',
-      `处理 ${year} 年的正确做法，不是硬找一个印象，而是把它标注为「待验证」，等后面某一年的同类事情发生时再回来对照。`,
-    );
-  } else if (feedback === '完全不符合') {
-    lines.push(
-      `你说 ${year} 完全不符合，我需要先排除三种可能：这条判断本身写错了；这一年确实被更外部的事情主导；或者你把年份记岔了。`,
-      '',
-      '请把你记得的那一年实际发生的事写下来——有了它，我才能分辨是判断的问题还是记忆的问题。',
-    );
-  } else {
-    lines.push(
-      `关于 ${year} 年，我会先确认三件事：这一年你最在意的结果是哪一个；上面列的事件里你实际经历过哪几条；你现在的资源（时间、钱、能帮你的人）还剩多少。`,
-      '',
-      '这三件事决定了同一年份应该给出完全不同的建议。等你正式接入对话后，我会基于紫微与八字的排盘结果，逐年回答你的追问。',
-    );
-  }
-  return lines.join('\n');
 }
 
 export default function ChenTeacherPanel({
@@ -72,16 +58,25 @@ export default function ChenTeacherPanel({
   savedNote,
   systemResponse,
   basis,
+  askContext,
   draft,
   onDraftChange,
   onSaveNote,
   onClose,
   onAction,
 }: Props) {
-  const [messages, setMessages] = useState<{ role: 'user' | 'chen'; text: string }[]>([]);
+  const [messages, setMessages] = useState<{ role: 'user' | 'chen'; text: string; basis?: string[] }[]>([]);
   const [noteText, setNoteText] = useState(savedNote ?? '');
   const [noteSaved, setNoteSaved] = useState(Boolean(savedNote));
+  const [thinking, setThinking] = useState(false);
+  /** 每日追问配额（3 次）。挂载后读，客户端才有 localStorage。 */
+  const [quota, setQuota] = useState(() => ({ used: 0, limit: ASK_LIMIT, remaining: ASK_LIMIT, resetNote: '' }));
   const noteRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 读取浏览器本地存储的配额
+    setQuota(getAskQuota());
+  }, [open]);
 
   if (!open) return null;
 
@@ -96,15 +91,41 @@ export default function ChenTeacherPanel({
     .sort((a, b) => Math.abs(a.year - year) - Math.abs(b.year - year))
     .slice(0, 3);
 
-  function send() {
+  /**
+   * 发送提问。
+   * 走真实回答引擎（lib/ask-answer.ts）——它会读问题在问哪个领域，
+   * 再引用这一年的宫位与四化，而不是回一段通用话术。
+   * 每次消耗一次配额；用完就显示上限文案，不再发送。
+   */
+  async function send() {
     const text = draft.trim();
-    if (!text) return;
-    setMessages((prev) => [
-      ...prev,
-      { role: 'user', text },
-      { role: 'chen', text: placeholderAnswer(year, feedback) },
-    ]);
+    if (!text || thinking) return;
+
+    if (!canAsk()) {
+      setQuota(getAskQuota());
+      return;
+    }
+
+    setMessages((prev) => [...prev, { role: 'user', text }]);
     onDraftChange('');
+    setThinking(true);
+
+    try {
+      const answer = await answerQuestion(text, askContext);
+      consumeAsk();
+      setQuota(getAskQuota());
+      setMessages((prev) => [
+        ...prev,
+        { role: 'chen', text: answer.paragraphs.join('\n\n'), basis: answer.basis },
+      ]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'chen', text: '这次没答上来。换个说法再问一次试试。', basis: [] },
+      ]);
+    } finally {
+      setThinking(false);
+    }
   }
 
   /** 系统回应里的「下一步」按钮 */
@@ -248,6 +269,8 @@ export default function ChenTeacherPanel({
           {messages.length === 0 && !suggestion && (
             <p className="text-xs leading-relaxed text-ink-3">
               可以直接问，例如：「这一年我该换工作吗」「如果反馈没有印象，说明什么」「这一年最该防的是什么」。
+              <br />
+              回答会读你的盘——包括这一年落哪个宫、被什么引动。每日三问为限。
             </p>
           )}
 
@@ -257,16 +280,42 @@ export default function ChenTeacherPanel({
               className={
                 'max-w-[92%] rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ' +
                 (m.role === 'user'
-                  ? 'ml-auto bg-accent text-white'
+                  ? 'ml-auto bg-accent text-page'
                   : 'border border-line bg-paper text-ink-2')
               }
             >
               {m.role === 'chen' && (
-                <p className="mb-1 text-xs font-medium text-ink-3">陈老师（占位回答）</p>
+                <p className="mb-1 text-xs font-medium text-ink-3">
+                  陈老师
+                  <span className="ml-1.5 font-normal text-ink-3/70">
+                    （读你的盘回答，不是通用话术）
+                  </span>
+                </p>
               )}
               {m.text}
+              {/* 回答的依据：让用户看得出这段话是从盘上哪来的 */}
+              {m.role === 'chen' && m.basis && m.basis.length > 0 && (
+                <details className="mt-2 border-t border-line pt-2">
+                  <summary className="cursor-pointer text-xs text-ink-3 transition hover:text-ink-2">
+                    这段回答的依据⌄
+                  </summary>
+                  <ul className="mt-1.5 space-y-1">
+                    {m.basis.map((b) => (
+                      <li key={b} className="text-xs leading-relaxed text-ink-3">
+                        · {b}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </div>
           ))}
+
+          {thinking && (
+            <div className="max-w-[92%] rounded-xl border border-line bg-paper px-4 py-3 text-sm text-ink-3">
+              正在看你的盘…
+            </div>
+          )}
         </div>
 
         {/* 建议追问 + 核对档案 */}
@@ -334,30 +383,66 @@ export default function ChenTeacherPanel({
 
         {/* 输入区 */}
         <div className="border-t border-line px-5 py-4">
-          <textarea
-            value={draft}
-            onChange={(e) => onDraftChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            rows={3}
-            placeholder="把你的问题写在这里，回车发送（Shift + 回车换行）"
-            className="w-full resize-none rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
-          />
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <p className="text-xs text-ink-3">草稿会自动保留，切换年份也不会丢。</p>
-            <button
-              type="button"
-              onClick={send}
-              disabled={!draft.trim()}
-              className="rounded-xl bg-ink px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              发送
-            </button>
-          </div>
+          {quota.remaining > 0 ? (
+            <>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <p className="text-xs text-ink-3">
+                  {quota.remaining === 1 ? LAST_ONE_MESSAGE : `今日还可问 ${quota.remaining} 次`}
+                </p>
+                <span
+                  className="flex gap-1"
+                  role="img"
+                  aria-label={`每日 ${quota.limit} 次，已用 ${quota.used} 次，剩 ${quota.remaining} 次`}
+                >
+                  {/* 点亮的格 = 已用掉。配合左边的"已用 N 次"文案，方向一致不会误读 */}
+                  {Array.from({ length: quota.limit }).map((_, i) => (
+                    <span
+                      key={i}
+                      className={
+                        'h-1.5 w-4 rounded-full transition ' +
+                        (i < quota.used ? 'bg-accent' : 'bg-line')
+                      }
+                    />
+                  ))}
+                </span>
+              </div>
+              <textarea
+                value={draft}
+                onChange={(e) => onDraftChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
+                rows={3}
+                placeholder="把你的问题写在这里，回车发送（Shift + 回车换行）"
+                className="w-full resize-none rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+              />
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <p className="text-xs text-ink-3">草稿会自动保留，切换年份也不会丢。</p>
+                <button
+                  type="button"
+                  onClick={send}
+                  disabled={!draft.trim() || thinking}
+                  className="rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-page transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {thinking ? '正在看盘…' : '发送'}
+                </button>
+              </div>
+            </>
+          ) : (
+            /* 达到上限：不说"次数用完了"，说成"今天到此为止" */
+            <div className="rounded-xl border border-accent/30 bg-accent-soft px-4 py-3.5">
+              <p className="text-[15px] font-medium text-ink">{CAP_MESSAGE.headline}</p>
+              {CAP_MESSAGE.lines.map((line) => (
+                <p key={line} className="mt-1 text-xs leading-relaxed text-ink-2">
+                  {line}
+                </p>
+              ))}
+              <p className="mt-2 text-xs text-ink-3">{CAP_MESSAGE.footer}</p>
+            </div>
+          )}
         </div>
       </aside>
     </div>
