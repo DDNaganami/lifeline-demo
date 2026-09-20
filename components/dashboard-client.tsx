@@ -7,12 +7,16 @@ import ContinueReview from '@/components/continue-review';
 import DimensionTabs from '@/components/dimension-tabs';
 import LifeArchive, { type ArchiveEntry } from '@/components/life-archive';
 import LifeCurve from '@/components/life-curve';
+import NatalChartPanel from '@/components/natal-chart-panel';
 import ReviewedYears, { type ReviewedYear } from '@/components/reviewed-years';
 import YearCard from '@/components/year-card';
+import { buildYearSignals, buildYearOffsets, directionLabel } from '@/lib/signals';
+import { buildPalaceEvents, type EventTone } from '@/lib/events';
 import {
   buildLifeLine,
   buildStageCard,
   buildYearCard,
+  CURRENT_YEAR,
   levelOf,
   MIN_AGE,
   nextUnreviewedYear,
@@ -100,6 +104,36 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
   const yearCardRef = useRef<HTMLDivElement>(null);
   const lastScrolledYear = useRef<number | null>(null);
 
+  /**
+   * 真实排盘驱动的「年度偏移」。
+   * 一年约 13ms，88 年约 1.1 秒——放到 effect 里算，不阻塞首屏渲染。
+   * 算完之前曲线先用纯模拟形状，算完后自动重绘。
+   */
+  const [yearOffsets, setYearOffsets] = useState<Map<number, number> | null>(null);
+  const [offsetsReady, setOffsetsReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    // 让首屏先渲染出来，再做重计算（避免白屏）
+    const timer = window.setTimeout(() => {
+      try {
+        const birthYear = Number(birth.birthDate.slice(0, 4));
+        // 注意：曲线的年份是"出生年 + 年龄"，所以偏移也要按同一范围取
+        const map = buildYearOffsets(birth, birthYear + MIN_AGE, birthYear + 88);
+        if (!cancelled) {
+          setYearOffsets(map);
+          setOffsetsReady(true);
+        }
+      } catch {
+        if (!cancelled) setOffsetsReady(true);
+      }
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [birth]);
+
   // 从「继续核对」或清单跳到某一年时，把年度卡片滚进视野
   useEffect(() => {
     if (selectedYear === null) return;
@@ -112,13 +146,13 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
   }, [selectedYear]);
 
   const derived = useMemo(() => {
-    const points = buildLifeLine(birth);
+    const points = buildLifeLine(birth, yearOffsets ?? undefined);
     const stage = buildStageCard(points, birth);
     const wanted = points.findIndex((p) => p.year === selectedYear);
     const index =
       wanted >= 0 ? wanted : Math.max(0, points.findIndex((p) => p.year === stage.year));
     return { points, stage, index, point: points[index] };
-  }, [birth, selectedYear]);
+  }, [birth, selectedYear, yearOffsets]);
 
   const { points, stage, point, index } = derived;
 
@@ -130,6 +164,52 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
   const dimensionScore = point[dimension];
   const level = levelOf(dimensionScore);
   const card = buildYearCard(points, index, dimension, birth);
+
+  /**
+   * 真实排盘信号：紫微（大限 + 流年四化）+ 八字（流年十神 + 大运），
+   * 替换掉年度卡片里模拟的「命理依据」。
+   */
+  const signals = useMemo(() => {
+    try {
+      return buildYearSignals(birth, point.year);
+    } catch {
+      return undefined; // 排盘失败时退回模拟文案，不让页面崩
+    }
+  }, [birth, point.year]);
+
+  const cardWithSignals = signals
+    ? {
+        ...card,
+        ziweiSignal: signals.ziweiSignal,
+        baziSignal: signals.baziSignal,
+        consistency: signals.consistency,
+      }
+    : card;
+
+  /**
+   * 事件列表由真实排盘生成：四化落在哪个宫，就出那个领域的事件。
+   * 两种口气（温和 / 直接）都准备，由产品决定用哪套——见 lib/events.ts。
+   */
+  const [eventTone, setEventTone] = useState<EventTone>('soft');
+  const cardWithEvents = useMemo(() => {
+    if (!signals) return cardWithSignals;
+    const distance = Math.abs(point.year - CURRENT_YEAR);
+    const maxCount = point.age <= 12 ? 4 : distance <= 3 ? 6 : distance <= 15 ? 5 : 4;
+    const evs = buildPalaceEvents(
+      signals.palaceImpacts,
+      dimension,
+      eventTone,
+      maxCount,
+      `${birth.birthDate}|${point.year}|${dimension}|${eventTone}`,
+    );
+    return evs.length >= 3
+      ? {
+          ...cardWithSignals,
+          events: evs.map((e) => ({ text: e.text, priority: e.priority })),
+        }
+      : cardWithSignals;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- cardWithSignals 由 signals 派生，signals 已在依赖里
+  }, [signals, dimension, eventTone, point.year, point.age, birth.birthDate]);
 
   const key = `${point.year}:${dimension}`;
   const currentFeedback: FeedbackType | undefined = feedbackMap[key]?.feedback;
@@ -250,6 +330,18 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
               {birth.name ? `${birth.name} · ` : ''}
               {formatBirth(birth)}
             </span>
+            <a
+              href="/ambient"
+              className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink-2 transition hover:border-line-strong"
+            >
+              桌面设备模拟器
+            </a>
+            <a
+              href="/changelog/"
+              className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink-2 transition hover:border-line-strong"
+            >
+              修改日志
+            </a>
             <button
               type="button"
               onClick={handleReset}
@@ -303,6 +395,9 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
           </p>
         </section>
 
+        {/* 本命盘（真实排盘） */}
+        <NatalChartPanel birth={birth} />
+
         {/* 继续核对 */}
         <ContinueReview
           nextYear={nextYear}
@@ -334,6 +429,34 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
               </span>
             </p>
           </div>
+
+          {/* 曲线与判断同源：说明这条曲线是由真实排盘驱动的 */}
+          <p
+            className={
+              'mt-3 rounded-lg border px-3 py-2 text-xs leading-relaxed ' +
+              (offsetsReady
+                ? 'border-teal-200 bg-teal-50 text-teal-800'
+                : 'border-line bg-paper text-ink-3')
+            }
+          >
+            {offsetsReady ? (
+              <>
+                ✅ 这条曲线已由<strong>真实排盘驱动</strong>：综合趋势的起伏来自
+                紫微（大限四化 + 流年四化）与八字（流年十神 + 大运）的计算结果，
+                与年度卡片里的判断<strong>同源</strong>。
+                {signals && (
+                  <>
+                    {' '}
+                    本年 紫微{directionLabel(signals.ziweiDirection)}、
+                    八字{directionLabel(signals.baziDirection)} → 两体系
+                    <strong>{signals.consistency}</strong>。
+                  </>
+                )}
+              </>
+            ) : (
+              <>⏳ 正在按你的出生信息逐年排盘（约 1 秒），完成后曲线会由真实排盘驱动…</>
+            )}
+          </p>
 
           <div className="mt-4">
             <DimensionTabs value={dimension} onChange={setDimension} />
@@ -423,8 +546,57 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
               </span>
             )}
           </div>
+
+          {/* 当年排盘：两手体系方向 + 事件文案口气切换 */}
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+            {signals && (
+              <>
+                <span className="text-ink-3">当年排盘：</span>
+                <span className="rounded-full border border-line bg-surface px-2.5 py-1 text-ink-2">
+                  紫微 · {directionLabel(signals.ziweiDirection)}
+                </span>
+                <span className="rounded-full border border-line bg-surface px-2.5 py-1 text-ink-2">
+                  八字 · {directionLabel(signals.baziDirection)}
+                </span>
+                <span
+                  className={
+                    'rounded-full border px-2.5 py-1 font-medium ' +
+                    (signals.consistency === '一致'
+                      ? 'border-teal-200 bg-teal-50 text-teal-800'
+                      : signals.consistency === '冲突'
+                        ? 'border-rose-200 bg-rose-50 text-rose-700'
+                        : 'border-slate-200 bg-slate-100 text-slate-600')
+                  }
+                >
+                  两体系{signals.consistency}
+                </span>
+                <span className="mx-1 hidden h-4 w-px bg-line sm:inline-block" />
+              </>
+            )}
+            {/* 事件文案口气：产品可切换，用于对比哪种更合适 */}
+            <span className="text-ink-3">事件口气：</span>
+            {([
+              { key: 'soft' as EventTone, label: '温和提醒' },
+              { key: 'direct' as EventTone, label: '直接事件' },
+            ]).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setEventTone(t.key)}
+                aria-pressed={eventTone === t.key}
+                className={
+                  'rounded-full border px-2.5 py-1 transition ' +
+                  (eventTone === t.key
+                    ? 'border-accent bg-accent-soft font-medium text-accent'
+                    : 'border-line bg-surface text-ink-2 hover:border-line-strong')
+                }
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
           <YearCard
-            card={card}
+            card={cardWithEvents}
             dimension={dimension}
             feedback={currentFeedback}
             note={currentNoteText}
@@ -478,7 +650,12 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
         )}
 
         <p className="pt-2 text-center text-xs leading-relaxed text-ink-3">
-          第一阶段原型：曲线与文案均为模拟数据，用于验证「回看 — 核对 — 追问」这条路径是否成立。
+          <strong className="text-ink-2">已接入真实排盘</strong>：紫微斗数（十二宫、大限、四化）
+          与八字（四柱、十神、大运）均为实际计算，并已按真太阳时定时辰；
+          年度事件由四化落宫生成。
+          <br />
+          曲线的长期形状、阶段名与「今日」内容仍是原型阶段的模拟数据——
+          用于验证「回看 — 核对 — 追问 — 沉淀」这条路径是否成立。
         </p>
       </main>
 

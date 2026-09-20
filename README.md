@@ -1,32 +1,52 @@
 # LifeLine 人生战略曲线 · 第一阶段原型
 
 一条可以逐年回看、逐条核对、随时追问的人生时间轴。
-当前是**纯前端可点击原型**：使用模拟数据，不接真实排盘计算、不接 AI、不做登录与数据库。
 
-> 📄 **要交给开发同学，请直接看 [`docs/开发交接文档.md`](docs/开发交接文档.md)**：
-> 含架构、数据模型、localStorage 合约、接排盘与接 AI 的具体接入点、已知坑与验收口径。
+**已接入真实排盘**：紫微斗数（十二宫、大限、四化）与八字（四柱、十神、大运）均为实际计算，
+并已按真太阳时定时辰；年度事件由四化落宫生成。
+**仍是模拟**：曲线的长期形状、人生阶段名称、「今日」页内容、语音交互。
+不接 AI、不做登录与数据库（反馈存在访问者自己的浏览器里）。
 
-## 怎么在浏览器里看
+## 🌐 在线演示（同事直接看这个）
+
+| 页面 | 地址 |
+|---|---|
+| 首页 | http://112.111.47.239:25572/ |
+| 仪表盘（含本命盘） | http://112.111.47.239:25572/dashboard/ |
+| 480×480 设备模拟器 | http://112.111.47.239:25572/ambient/ |
+| **修改日志** | **http://112.111.47.239:25572/changelog/** |
+
+## 🚀 部署（一条命令）
 
 ```bash
-# 1) 构建正式版本（只需要在改动代码之后做一次）
-npm run build
-
-# 2) 启动（默认 http://localhost:3000）
-npm start
-
-# 想换端口：先设置环境变量 PORT，再执行 npm start
+node scripts/deploy.mjs
 ```
 
-打开后：首页填写出生信息 → 点「生成我的人生战略曲线」→ 进入仪表盘。
+它会自动完成：构建 → 打包 → 上传到服务器 → 解压重启服务 → **从外网逐页验证**，约 25 秒。
+构建失败会**中止部署**（线上保持上一个可用版本），不会把坏版本推上去。
+
+服务器信息与运维方法见 [`deploy/服务器部署记录.md`](deploy/服务器部署记录.md)。
+
+每个改动都记在 [`lib/changelog.ts`](lib/changelog.ts)，会显示在 `/changelog/` 页面上（面向不看代码的人写）。
+
+> 📄 **要交给开发同学，请直接看 [`docs/开发交接文档.md`](docs/开发交接文档.md)**：
+> 含架构、数据模型、**排盘接入的实测结论与坑**、真太阳时实现、验证脚本、验收口径。
+> 硬件固件看 [`docs/ESP32固件开发规格.md`](docs/ESP32固件开发规格.md)。
+
+## 怎么在本地跑
+
+```bash
+npm run build      # 构建静态站点（输出到 out/）
+node deploy/server.js 8080   # 零依赖静态服务器，打开 http://localhost:8080
+```
 
 > ⚠️ 已知限制：在当前这台机器的运行环境里，`npm run dev`（开发模式）的热更新长连接会被拦截，
-> 导致页面点击没有反应。**请用上面的 `npm run build` + `npm start` 方式查看**，
-> 正式版本一切正常（表单、切维度、点年份、四档反馈、追问面板均已验证通过）。
+> 导致页面点击没有反应。**请用 `npm run build` + `deploy/server.js` 查看**。
 
 ## 主路径
 
 1. 首页 `/`：填写姓名（可选）、性别、出生日期、出生时辰、出生地，做基本必填校验。
+   **填完出生地会实时显示真太阳时校正预览**（跨时辰边界会警告）。
 2. 仪表盘 `/dashboard`：
    - 顶部「当前阶段卡」：当前年龄、公历年份、所属大限、阶段名称（如「责任扩大期」）。
    - 中部「人生总曲线」：横轴年龄 + 公历年份；纵轴只分四档（高位/中上/中位/低位），**不出现具体分数**；
@@ -62,12 +82,15 @@ npm start
 
 ```
 app/
-  page.tsx                  首页（出生信息表单）
+  page.tsx                  首页（出生信息表单 + 真太阳时预览）
   dashboard/page.tsx        仪表盘页面
+  ambient/page.tsx          480×480 设备模拟器
+  changelog/page.tsx        修改日志（面向不看代码的人）
   layout.tsx globals.css    全局框架与配色
 components/
-  birth-form.tsx            出生信息表单
+  birth-form.tsx            出生信息表单（含时辰可信度、真太阳时预览）
   dashboard-client.tsx      仪表盘主体（读取本地数据 + 状态管理）
+  natal-chart-panel.tsx     本命盘（十二宫，按地支固定方位）
   life-curve.tsx            纯 SVG 人生曲线
   dimension-tabs.tsx        六个维度切换
   year-card.tsx             年度卡片
@@ -76,25 +99,43 @@ components/
   continue-review.tsx       继续核对（指向下一个未核对年份）
   reviewed-years.tsx        我核对过的年份（按年份归并）
   life-archive.tsx          我的人生档案（按年份连成一条线）
+  qr-code.tsx               二维码（自己渲染 SVG，不用库的图片输出）
+  ambient-simulator.tsx     设备模拟器六屏（含扫码屏与圆形屏预览）
 lib/
   types.ts                  数据模型（TypeScript 接口）
-  mock-data.ts              模拟数据生成
+  chart.ts                  ★ 紫微斗数排盘封装（iztro）
+  bazi.ts                   ★ 八字排盘（lunar-typescript，**不要用 iztro 的八字**）
+  solar-time.ts             ★ 真太阳时校正（经度差 + 均时差 + 夏令时）
+  signals.ts                ★ 两手体系合并、一致性判定、曲线驱动
+  events.ts                 ★ 四化落宫 → 年度事件（两种文案口气）
+  mock-data.ts              曲线长期形状与阶段名（模拟部分）
+  changelog.ts              修改日志数据
   notes.ts                  反馈 → 追问文案的生成规则
   storage.ts                localStorage 读写
 scripts/
-  smoke.ts                  数据质量检查（node --experimental-strip-types scripts/smoke.ts）
-  verify-ui.mjs             主路径自动验证 + 截图
-  verify-review-loop.mjs    核对闭环自动验证（继续核对 → 写经历 → 档案）
-  verify-grouping.mjs       按年份归并、点维度跳回的自动验证
-  check-mobile.mjs          手机尺寸布局检查
+  deploy.mjs                ★ 一键部署（构建→上传→重启→外网验证）
+  test-*.ts                 命理计算测试（用 tsx 跑，见交接文档 §10）
+  verify-*.mjs              浏览器端验证（无头 Chrome）
 ```
 
-以上脚本用法：先启动服务，再 `BASE_URL=http://127.0.0.1:3100 node scripts/verify-ui.mjs`。
+> **改排盘相关代码后，务必跑**：`npx tsx scripts/test-solar-time.ts`、
+> `test-bazi.ts`、`test-events.ts` —— 它们对照的是已知正确值，不是"看起来对"。
 
-## 下一阶段可以做什么
+## 下一步
 
-- 接真实排盘：把 `lib/mock-data.ts` 换成真实计算模块，页面结构不用改。
-- 接 AI 追问：把 `chen-teacher-panel.tsx` 里的占位回答换成真实模型调用。
-- 反馈回流：把「四档反馈」用于校准后续年份的判断与文案。
-- 数据持久化：目前全在浏览器 localStorage，正式版需要账号 + 云端存储，
+- **让主判断也由排盘生成**：现在事件已由四化落宫生成，但上面那句「主判断」还是按趋势抽的文案。
+- **「今日」页接流日四化**：iztro 支持到流日、流时，这是日活的真正来源。
+- **接 AI 追问**：把 `chen-teacher-panel.tsx` 里的占位回答换成真实模型调用。
+- **反馈回流**：把「四档反馈」用于校准后续年份的判断与权重。
+- **数据持久化**：目前全在浏览器 localStorage，正式版需要账号 + 云端存储，
   并让用户能导出／迁移自己的核对档案。
+
+## 待产品/命理口径确认
+
+1. **采用哪一派**（三合 / 飞星 / 四化）作为主口径？
+2. **子时归属**：晚子时（23:00-24:00）算当日还是次日？（两个库做法不同）
+3. **庚干四化等有争议规则**采用哪一家？
+4. **年度事件的文案口气**用哪套（温和提醒 / 直接事件）？界面上可切换对比。
+5. **是否保留**「黄历各家宜忌不一致」的口径说明。
+
+

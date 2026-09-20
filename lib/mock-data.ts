@@ -223,7 +223,10 @@ function trendOf(prev?: number, cur?: number, next?: number): Trend {
 }
 
 /** 生成从 1 岁到 88 岁的完整曲线 */
-export function buildLifeLine(birth: BirthInfo): LifeLinePoint[] {
+export function buildLifeLine(
+  birth: BirthInfo,
+  yearOffsets?: Map<number, number>,
+): LifeLinePoint[] {
   const birthYear = Number(birth.birthDate.slice(0, 4)) || CURRENT_YEAR - 35;
   const personSeed = `${birth.birthDate}|${birth.birthTime}|${birth.gender}`;
   const dims: DimensionKey[] = ['overall', 'career', 'wealth', 'marriage', 'parents', 'health'];
@@ -237,27 +240,40 @@ export function buildLifeLine(birth: BirthInfo): LifeLinePoint[] {
     raw.set(dim, list);
   }
 
+  const clamp = (v: number) => round1(Math.max(5, Math.min(97, v)));
+
   const points: LifeLinePoint[] = [];
   for (let age = MIN_AGE; age <= MAX_AGE; age++) {
     const i = age - MIN_AGE;
+    const year = birthYear + age;
+    /**
+     * 排盘偏移只作用在「综合趋势」上——它是"这个人这一年整体如何"，
+     * 而六个维度各有自己的长期形状（比如健康随年龄下行），不该被整体偏移拉平。
+     */
+    const offset = yearOffsets?.get(year) ?? 0;
     const overallList = raw.get('overall')!;
     const get = (dim: DimensionKey, j: number) => raw.get(dim)![j];
     points.push({
       age,
-      year: birthYear + age,
-      overall: overallList[i],
-      career: get('career', i),
-      wealth: get('wealth', i),
-      marriage: get('marriage', i),
-      parents: get('parents', i),
-      health: get('health', i),
+      year,
+      overall: clamp(overallList[i] + offset),
+      career: clamp(get('career', i)),
+      wealth: clamp(get('wealth', i)),
+      marriage: clamp(get('marriage', i)),
+      parents: clamp(get('parents', i)),
+      health: clamp(get('health', i)),
       phase: phaseOf(age),
-      trend: trendOf(
-        i > 0 ? overallList[i - 1] : undefined,
-        overallList[i],
-        i < overallList.length - 1 ? overallList[i + 1] : undefined,
-      ),
+      trend: '震荡', // 下面按加了偏移的最终序列重新判定
     });
+  }
+
+  // 加了偏移会改变曲线形状，趋势必须基于**最终数值**重算
+  for (let i = 0; i < points.length; i++) {
+    points[i].trend = trendOf(
+      i > 0 ? points[i - 1].overall : undefined,
+      points[i].overall,
+      i < points.length - 1 ? points[i + 1].overall : undefined,
+    );
   }
   return points;
 }

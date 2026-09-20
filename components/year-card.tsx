@@ -144,8 +144,13 @@ export default function YearCard({
               <dd className="mt-0.5 leading-relaxed text-ink-2">{card.baziSignal}</dd>
             </div>
           </dl>
-          <p className="text-xs text-ink-3">
-            原型阶段这些依据为演示文本，正式版会由排盘结果自动生成。
+          <p className="text-xs leading-relaxed text-ink-3">
+            紫微与八字<strong className="text-ink-2">均为真实排盘结果</strong>
+            （已按真太阳时定时辰）。
+            紫微：大限宫位 + 大限四化 + 流年四化；
+            八字：流年十神 + 现行大运。
+            「是否一致」目前是<strong className="text-ink-2">简化规则</strong>
+            （只比较两个体系的方向是否同向），上线前需由懂命理的人校准。
           </p>
         </div>
       </details>

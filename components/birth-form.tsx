@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { buildTrueSolarTime } from '@/lib/solar-time';
 import { saveBirth } from '@/lib/storage';
 import type { BirthInfo } from '@/lib/types';
 
@@ -35,9 +36,27 @@ const PLACE_SUGGESTIONS = [
   '重庆',
   '天津',
   '长沙',
+  '乌鲁木齐',
+  '拉萨',
+  '香港',
+  '台北',
+  '东京',
+  '新加坡',
+  '伦敦',
+  '纽约',
+  '洛杉矶',
+  '悉尼',
+  '多伦多',
 ];
 
 const GENDERS: BirthInfo['gender'][] = ['男', '女', '其他'];
+
+/** 时辰是否确定——真太阳时校正需要它来标注可信度 */
+const TIME_CONFIDENCE: { key: NonNullable<BirthInfo['birthTimeConfidence']>; label: string; note: string }[] = [
+  { key: 'exact', label: '确定', note: '出生证明或长辈明确告知' },
+  { key: 'approx', label: '大概是', note: '只知道上午 / 下午这种程度' },
+  { key: 'unknown', label: '不知道', note: '按正午计算，结果仅供参考' },
+];
 
 const labelClass = 'block text-sm font-medium text-ink-2';
 const fieldClass =
@@ -50,14 +69,43 @@ export default function BirthForm() {
   const [birthDate, setBirthDate] = useState('');
   const [birthTime, setBirthTime] = useState('');
   const [birthPlace, setBirthPlace] = useState('');
+  const [timeConfidence, setTimeConfidence] =
+    useState<NonNullable<BirthInfo['birthTimeConfidence']>>('exact');
   const [errors, setErrors] = useState<string[]>([]);
+
+  /**
+   * 实时算一次真太阳时校正，用来**在填写阶段就提醒**：
+   *   - 校正后跨了时辰边界 → 命宫会变，必须提醒
+   *   - 校正后离边界很近（15 分钟内）→ 稍微不准就会换命宫
+   *   - 城市认不出来 → 无法做经度校正
+   *
+   * 这一步用真实算法，不是估算——它影响的是整张命盘对不对。
+   */
+  const solarPreview = useMemo(() => {
+    if (!birthDate || !birthTime || !birthPlace.trim()) return null;
+    try {
+      const st = buildTrueSolarTime({
+        gender,
+        birthDate,
+        birthTime,
+        birthPlace: birthPlace.trim(),
+      });
+      // 距离时辰边界还有多少分钟
+      const [th, tm] = st.trueSolarTime.split(':').map(Number);
+      const minutesIntoShichen = ((th + 1) % 2) * 60 + tm;
+      const toBoundary = Math.min(minutesIntoShichen, 120 - minutesIntoShichen);
+      return { ...st, toBoundary };
+    } catch {
+      return null;
+    }
+  }, [birthDate, birthTime, birthPlace, gender]);
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const next: string[] = [];
     if (!birthDate) next.push('请选择出生日期');
     if (!birthTime) next.push('请选择出生时辰（不确定也可以选「不确定」）');
-    if (!birthPlace.trim()) next.push('请填写出生地');
+    if (!birthPlace.trim()) next.push('请填写出生地（真太阳时校正需要它来定位经度）');
     setErrors(next);
     if (next.length > 0) return;
 
@@ -65,7 +113,9 @@ export default function BirthForm() {
       name: name.trim() || undefined,
       gender,
       birthDate,
+      // 时辰本身标为"不确定"时，可信度也自动降级
       birthTime,
+      birthTimeConfidence: birthTime.includes('不确定') ? 'unknown' : timeConfidence,
       birthPlace: birthPlace.trim(),
     });
     router.push('/dashboard');
@@ -140,6 +190,41 @@ export default function BirthForm() {
             </option>
           ))}
         </select>
+
+        {/* 时辰可信度：真太阳时会改变时辰，所以必须知道输入本身有多可靠 */}
+        <div className="mt-3">
+          <p className="text-xs text-ink-3">
+            这个时辰有多确定？真太阳时校正会按出生地重新定时辰，如果原本就不确定，我们会标注出来。
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {TIME_CONFIDENCE.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                disabled={birthTime.includes('不确定')}
+                onClick={() => setTimeConfidence(c.key)}
+                aria-pressed={timeConfidence === c.key}
+                className={
+                  'rounded-lg border px-3 py-1.5 text-xs transition disabled:opacity-40 ' +
+                  (timeConfidence === c.key && !birthTime.includes('不确定')
+                    ? 'border-accent bg-accent-soft font-medium text-accent'
+                    : 'border-line bg-surface text-ink-2 hover:border-line-strong')
+                }
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+          {birthTime.includes('不确定') ? (
+            <p className="mt-1.5 text-xs text-amber-700">
+              已选「不确定」→ 将按正午（午时）计算，命盘结果会标注为仅供参考。
+            </p>
+          ) : (
+            <p className="mt-1.5 text-xs text-ink-3">
+              {TIME_CONFIDENCE.find((c) => c.key === timeConfidence)?.note}
+            </p>
+          )}
+        </div>
       </div>
 
       <div>
@@ -149,11 +234,66 @@ export default function BirthForm() {
         <input
           id="birthPlace"
           className={fieldClass}
-          placeholder="例如：浙江杭州"
+          placeholder="例如：浙江杭州 / 乌鲁木齐 / 纽约"
           list="place-suggestions"
           value={birthPlace}
           onChange={(e) => setBirthPlace(e.target.value)}
         />
+        <p className="mt-1.5 text-xs text-ink-3">
+          请填<strong className="text-ink-2">城市</strong>（不是「XX 省」）——
+          真太阳时要按经度校正，认不出城市就只能按东经 120° 粗略计算。
+        </p>
+
+        {/* 真太阳时预览：填完就告诉你时辰会不会被改 */}
+        {solarPreview && (
+          <div
+            className={
+              'mt-3 rounded-xl border px-3 py-2.5 text-xs leading-relaxed ' +
+              (solarPreview.crossedBoundary || solarPreview.toBoundary <= 15
+                ? 'border-amber-200 bg-amber-50 text-amber-900'
+                : 'border-line bg-paper text-ink-2')
+            }
+          >
+            <p>
+              <strong>真太阳时校正预览：</strong>
+              钟表 {solarPreview.localTime} → 真太阳时{' '}
+              <strong>{solarPreview.trueSolarTime}</strong>（{solarPreview.timeName}）
+              ，修正 {solarPreview.totalOffsetMinutes > 0 ? '+' : ''}
+              {solarPreview.totalOffsetMinutes} 分
+              {solarPreview.dstApplied && '，已扣除夏令时'}。
+            </p>
+
+            {solarPreview.crossedBoundary && (
+              <p className="mt-1.5">
+                ⚠️ <strong>校正后跨了时辰边界</strong>：按钟表时间算是别的时辰，
+                按真太阳时落到 <strong>{solarPreview.timeName}</strong>。
+                <strong>命宫会因此改变，整张盘都不同</strong>——建议再确认一下出生时间。
+              </p>
+            )}
+
+            {!solarPreview.crossedBoundary && solarPreview.toBoundary <= 15 && (
+              <p className="mt-1.5">
+                ⚠️ 真太阳时离时辰边界只差 <strong>{Math.round(solarPreview.toBoundary)} 分钟</strong>
+                ，出生时间稍微不准就会换一个时辰，命宫也会跟着变。建议核对更精确的时间。
+              </p>
+            )}
+
+            {solarPreview.place.approximate && (
+              <p className="mt-1.5">
+                ⚠️ 没认出「{birthPlace.trim()}」这个出生地，暂时按东经 120° 粗略计算。
+                建议从下面的候选里选一个城市。
+              </p>
+            )}
+
+            {!solarPreview.crossedBoundary &&
+              solarPreview.toBoundary > 15 &&
+              !solarPreview.place.approximate && (
+                <p className="mt-1.5 text-ink-3">
+                  ✅ 离时辰边界还有 {Math.round(solarPreview.toBoundary)} 分钟，时辰比较稳。
+                </p>
+              )}
+          </div>
+        )}
         <datalist id="place-suggestions">
           {PLACE_SUGGESTIONS.map((p) => (
             <option key={p} value={p} />
@@ -177,8 +317,10 @@ export default function BirthForm() {
       </button>
 
       <p className="text-center text-xs leading-relaxed text-ink-3">
-        当前为第一阶段原型，使用模拟数据，不做真实排盘计算。
+        <strong className="text-ink-2">紫微与八字为真实排盘</strong>
+        （含真太阳时校正），年度事件由四化落宫生成。
         <br />
+        曲线的长期形状与「今日」内容仍是原型阶段的模拟数据。
         填写的信息只保存在你自己的浏览器里。
       </p>
     </form>
