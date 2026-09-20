@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   DIMENSION_LABEL,
   type DimensionKey,
   type FeedbackType,
   type YearCardData,
 } from '@/lib/types';
+import type { SystemResponse } from '@/lib/response';
 
 interface Props {
   open: boolean;
@@ -20,10 +21,19 @@ interface Props {
   suggestion?: string;
   /** 已有的核对档案原文 */
   savedNote?: string;
+  /**
+   * 系统对这次反馈的回应（规则生成，不是 AI）。
+   * 这是闭环里最关键的一环：**反馈必须被接住**。
+   */
+  systemResponse?: SystemResponse;
+  /** 真实排盘的依据行（用于让回应显得"确实懂这年"） */
+  basis?: string;
   draft: string;
   onDraftChange: (text: string) => void;
   onSaveNote: (text: string, skipped: boolean) => void;
   onClose: () => void;
+  /** 系统回应里的下一步动作 */
+  onAction?: (action: 'note' | 'ask' | 'continue' | 'checkTime') => void;
 }
 
 /** 未接真实 AI 前，先给一段占位回答 */
@@ -60,14 +70,18 @@ export default function ChenTeacherPanel({
   history,
   suggestion,
   savedNote,
+  systemResponse,
+  basis,
   draft,
   onDraftChange,
   onSaveNote,
   onClose,
+  onAction,
 }: Props) {
   const [messages, setMessages] = useState<{ role: 'user' | 'chen'; text: string }[]>([]);
   const [noteText, setNoteText] = useState(savedNote ?? '');
   const [noteSaved, setNoteSaved] = useState(Boolean(savedNote));
+  const noteRef = useRef<HTMLTextAreaElement>(null);
 
   if (!open) return null;
 
@@ -91,6 +105,16 @@ export default function ChenTeacherPanel({
       { role: 'chen', text: placeholderAnswer(year, feedback) },
     ]);
     onDraftChange('');
+  }
+
+  /** 系统回应里的「下一步」按钮 */
+  function handleAction(action: 'note' | 'ask' | 'continue' | 'checkTime') {
+    if (action === 'note') {
+      noteRef.current?.focus();
+      noteRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    onAction?.(action);
   }
 
   function handleSaveNote(skipped: boolean) {
@@ -175,6 +199,41 @@ export default function ChenTeacherPanel({
 
         {/* 对话区 */}
         <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+          {/* 系统回应：闭环里最关键的一环——反馈必须被接住 */}
+          {systemResponse && (
+            <div className="rounded-xl border border-accent/30 bg-accent-soft px-4 py-3">
+              <p className="text-xs font-medium text-accent">系统回应</p>
+              <p className="mt-1.5 text-[15px] font-medium leading-relaxed text-ink">
+                {systemResponse.headline}
+              </p>
+              {systemResponse.detail.map((d) => (
+                <p key={d} className="mt-1.5 text-sm leading-relaxed text-ink-2">
+                  {d}
+                </p>
+              ))}
+
+              {basis && (
+                <p className="mt-2.5 border-t border-accent/20 pt-2 text-xs leading-relaxed text-ink-3">
+                  本年排盘依据：{basis}
+                </p>
+              )}
+
+              <p className="mt-2 text-xs leading-relaxed text-ink-3">
+                {systemResponse.archiveGrowth}
+              </p>
+
+              {systemResponse.nextStep && (
+                <button
+                  type="button"
+                  onClick={() => handleAction(systemResponse.nextStep!.action)}
+                  className="mt-3 rounded-lg bg-accent px-3.5 py-2 text-xs font-medium text-page transition hover:opacity-90"
+                >
+                  {systemResponse.nextStep.label} →
+                </button>
+              )}
+            </div>
+          )}
+
           {suggestion && !noteSaved && (
             <p className="rounded-lg border border-accent/25 bg-accent-soft px-3 py-2 text-xs leading-relaxed text-accent">
               刚记下你的反馈，所以自动把这个问题带过来了。可以直接用，也可以改；不写的话点下面「这一年先不写」。
@@ -246,6 +305,7 @@ export default function ChenTeacherPanel({
                 </label>
                 <textarea
                   id="year-note"
+                  ref={noteRef}
                   value={noteText}
                   onChange={(e) => setNoteText(e.target.value)}
                   rows={3}

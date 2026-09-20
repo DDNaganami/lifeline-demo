@@ -13,6 +13,7 @@ import ReviewedYears, { type ReviewedYear } from '@/components/reviewed-years';
 import YearCard from '@/components/year-card';
 import { buildYearSignals, buildYearOffsets, directionLabel } from '@/lib/signals';
 import { buildPalaceEvents, type EventTone } from '@/lib/events';
+import { buildSystemResponse, responseBasis } from '@/lib/response';
 import {
   buildLifeLine,
   buildStageCard,
@@ -87,15 +88,21 @@ export default function DashboardClient() {
     setReady(true);
   }, [router]);
 
-  // 从首页点问题进来时，把问题与目标维度/年份读出来
+  /**
+   * 从首页点问题进来时，把问题与目标维度/年份读出来。
+   *
+   * 注意：`dim` / `year` **独立于 `q`**——只带维度不带问题也应该生效
+   * （例如从外部链接直接跳到「事业 · 2028」）。
+   * 之前写成 `if (!q) return`，导致只带 dim 时整个读取被跳过。
+   */
   useEffect(() => {
     const q = searchParams.get('q');
-    if (!q) return;
     const dim = searchParams.get('dim');
     const year = searchParams.get('year');
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 读取地址栏参数
+    if (!q && !dim && !year) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 读取地址栏参数（静态导出无法在服务端读）
     setAsked({
-      question: q,
+      question: q ?? '',
       dimension: (dim as DimensionKey) ?? undefined,
       year: year ? Number(year) : undefined,
     });
@@ -323,6 +330,26 @@ function DashboardBody({
     }
   }
 
+  /**
+   * 系统回应：反馈一给出就生成，规则驱动、不用 AI。
+   * 这是闭环里唯一断掉的一环——用户反馈了必须有回应，
+   * 否则「越反馈越懂你」的循环转不起来。
+   */
+  const systemResponse = useMemo(() => {
+    if (!currentFeedback) return undefined;
+    return buildSystemResponse({
+      year: point.year,
+      age: point.age,
+      dimensionLabel: DIMENSION_LABEL[dimension],
+      feedback: currentFeedback,
+      signals,
+      materialCount: historyList.length + archiveEntries.length,
+      timeConfident: birth.birthTimeConfidence !== 'unknown' && !birth.birthTime.includes('不确定'),
+      mainJudgment: card.mainJudgment,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- historyList/archiveEntries 由 feedbackMap/notes 派生
+  }, [currentFeedback, point.year, point.age, dimension, signals, birth, card.mainJudgment]);
+
   function handleOpenPanel() {
     setSuggestion(undefined);
     setPanelOpen(true);
@@ -397,18 +424,29 @@ function DashboardBody({
       </div>
 
       <main className="mx-auto w-full max-w-6xl space-y-6 px-5 py-6 sm:px-8 sm:py-8">
-        {/* 从首页带过来的问题：钉在最上面，让用户一眼看到他问的那件事 */}
+        {/*
+          从首页带过来的问题：钉在最上面，让用户一眼看到他问的那件事。
+          只带 dim/year（没有具体问题）时也显示，只是措辞不同 ——
+          外部链接可以直接跳到「事业 · 2028」这种定位。
+        */}
         {asked && (
           <section className="rounded-2xl border border-accent/30 bg-accent-soft px-5 py-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-xs text-ink-3">你问的是</p>
-                <p className="mt-1 text-lg leading-relaxed text-ink">{asked.question}</p>
+                {asked.question ? (
+                  <>
+                    <p className="text-xs text-ink-3">你问的是</p>
+                    <p className="mt-1 text-lg leading-relaxed text-ink">{asked.question}</p>
+                  </>
+                ) : (
+                  <p className="text-xs text-ink-3">已按链接定位</p>
+                )}
                 <p className="mt-1.5 text-xs text-ink-3">
                   已定位到
                   <strong className="text-ink-2">{DIMENSION_LABEL[dimension]}</strong>
                   维度 · <strong className="text-ink-2">{point.year} 年</strong>
-                  （{point.age} 岁）——下面的曲线与年度卡片就是这个问题的答案。
+                  （{point.age} 岁）
+                  {asked.question ? '——下面的曲线与年度卡片就是这个问题的答案。' : '。'}
                 </p>
               </div>
               <button
@@ -737,12 +775,25 @@ function DashboardBody({
         history={historyList}
         suggestion={suggestion}
         savedNote={currentNoteText}
+        systemResponse={systemResponse}
+        basis={responseBasis(signals)}
         draft={draft}
         onDraftChange={(t) => {
           setDraft(t);
           saveDraft(t);
         }}
         onSaveNote={handleSaveNote}
+        onAction={(action) => {
+          if (action === 'continue') {
+            setPanelOpen(false);
+            handleContinue();
+          } else if (action === 'checkTime') {
+            router.push('/birth/');
+          } else if (action === 'ask') {
+            setPanelOpen(true);
+          }
+          // 'note' 由面板内部处理（聚焦输入框）
+        }}
         onClose={() => {
           setPanelOpen(false);
           setSuggestion(undefined);
