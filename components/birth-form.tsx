@@ -258,10 +258,25 @@ export default function BirthForm() {
               </p>
             )}
 
-            {solarPreview.place.approximate && (
+            {/*
+              经度来源分三种情况，措辞必须区分——把"省级估算"说成"认不出"会误导用户：
+                ① 认到具体城市 → 不问
+                ② 只认到省份   → 说明是按省中心估算，并说清误差量级
+                ③ 完全认不出   → 明确提示不做校正
+            */}
+            {solarPreview.place.provinceLevel && (
               <p className="mt-1.5">
-                ⚠️ 没认出「{birthPlace.trim()}」这个出生地，暂时按东经 120° 粗略计算。
-                建议从下面的候选里选一个城市。
+                出生地按 <strong>{solarPreview.place.province}</strong> 的省中心经度估算
+                （东经 {solarPreview.place.longitude}°）。同省内城市一般相差不到 4 分钟，
+                想更准可以选一个具体城市。
+              </p>
+            )}
+
+            {solarPreview.place.approximate && !solarPreview.place.provinceLevel && (
+              <p className="mt-1.5">
+                ⚠️ 没认出「{birthPlace.trim()}」这个出生地，暂时<strong>不做经度校正</strong>
+                （按东经 120° 算）。
+                建议选一个城市，或写上省份（如「新疆阿克苏」）——有省份就能补掉大部分偏差。
               </p>
             )}
 

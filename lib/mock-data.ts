@@ -191,17 +191,39 @@ function shapeValue(dim: DimensionKey, age: number): number {
 }
 
 /**
- * 单点取值：长期形状 + 个人节律（两条正弦叠加） + 整体抬升或压低。
- * 刻意不加「逐年随机抖动」，否则曲线会长满毛刺、不像人生轨迹。
+ * 单点取值：长期形状 + 个人节律（两条正弦叠加） + **命盘基调**。
+ *
+ * ⚠️ 这里改过一次关键逻辑：
+ *   原来第三项是 `(rng(personSeed|birthYear|dim) - 0.5) * 8`，
+ *   也就是「个人基调」由**出生日期哈希出的随机数**决定——
+ *   "你财运天生好"这件事是掷骰子定的，跟命盘无关。
+ *   现在改成由 `dimensionOffsets`（对应宫位的星曜庙旺）提供。
+ *
+ * 保留年龄曲线：健康随年龄下行、事业中年达峰，这些是人生规律，与命盘无关。
+ * 保留节律波形：它给曲线自然的起伏，避免长成一条直线。
+ * 依然**不加逐年随机抖动**，否则曲线会长满毛刺、不像人生轨迹。
  */
-function scoreAt(dim: DimensionKey, age: number, personSeed: string, birthYear: number): number {
+function scoreAt(
+  dim: DimensionKey,
+  age: number,
+  personSeed: string,
+  birthYear: number,
+  dimensionOffsets?: Record<DimensionKey, number>,
+): number {
   const base = shapeValue(dim, age);
   const [p1, a1, ph1, p2, a2, ph2] = WAVE[dim];
   const wave =
     Math.sin((age / p1) * Math.PI * 2 + ph1) * a1 +
     Math.sin((age / p2) * Math.PI * 2 + ph2) * a2;
-  // 每个人的整体抬升/压低（同一份出生信息固定不变）
-  const offset = (rng(`${personSeed}|${birthYear}|${dim}`) - 0.5) * 8;
+
+  /**
+   * 命盘基调：优先用真实排盘（宫位庙旺）；
+   * 排盘不可用时退回原来的稳定随机数——**但只在降级路径上**，
+   * 正常路径不再有随机成分。
+   */
+  const offset =
+    dimensionOffsets?.[dim] ?? (rng(`${personSeed}|${birthYear}|${dim}`) - 0.5) * 8;
+
   return round1(Math.max(5, Math.min(97, base + wave + offset)));
 }
 
@@ -230,11 +252,15 @@ function trendOf(prev?: number, cur?: number, next?: number): Trend {
  * @param yearOffsets 可选：**由真实排盘驱动的年度偏移**（见 lib/signals.ts）
  * @param phases 可选：**由真实大限生成的人生阶段**（见 lib/phases.ts）
  *   传入后，阶段名与边界都按这个人的命盘来，不再是所有人共用一张固定表
+ * @param dimensionOffsets 可选：**六个维度的命盘基调**（见 lib/dimension-base.ts）
+ *   传入后，"这个人哪个领域天生强/弱"由宫位庙旺决定，而不是随机数
  */
 export function buildLifeLine(
   birth: BirthInfo,
   yearOffsets?: Map<number, number>,
   phases?: LifePhase[],
+  /** 六个维度的命盘基调（由宫位庙旺生成，见 lib/dimension-base.ts） */
+  dimensionOffsets?: Record<DimensionKey, number>,
 ): LifeLinePoint[] {
   const birthYear = Number(birth.birthDate.slice(0, 4)) || CURRENT_YEAR - 35;
   const personSeed = `${birth.birthDate}|${birth.birthTime}|${birth.gender}`;
@@ -244,7 +270,7 @@ export function buildLifeLine(
   for (const dim of dims) {
     const list: number[] = [];
     for (let age = MIN_AGE; age <= MAX_AGE; age++) {
-      list.push(scoreAt(dim, age, personSeed, birthYear));
+      list.push(scoreAt(dim, age, personSeed, birthYear, dimensionOffsets));
     }
     raw.set(dim, list);
   }

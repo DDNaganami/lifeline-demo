@@ -80,14 +80,18 @@ export default function PlacePicker({ value, onChange, id }: Props) {
               （东经 {resolved.longitude}°）
             </span>
           ) : resolved.provinceLevel && resolved.province ? (
-            <span className="text-amber-800">
-              没找到这个城市，暂按 <strong>{resolved.province}</strong> 的中心经度
-              （东经 {resolved.longitude}°）估算——建议从下面的列表里选一个城市更准
+            <span className="text-ink-3">
+              按 <strong className="text-ink-2">{resolved.province}</strong> 的中心经度估算
+              （东经 {resolved.longitude}°）。
+              <span className="text-amber-800">
+                这一项能补掉约 99% 的修正量——同省内城市一般相差不到 4 分钟
+              </span>
+              ，想要更准可以从下面选一个具体城市。
             </span>
           ) : (
             <span className="text-amber-800">
               认不出这个地名，暂时不做经度校正（相当于按东经 120° 算）。
-              请从下面的列表里选一个城市。
+              请从下面的列表里选一个城市，或写上省份（如「新疆阿克苏」）。
             </span>
           )}
         </p>

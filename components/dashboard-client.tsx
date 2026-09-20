@@ -15,6 +15,7 @@ import { buildYearSignals, buildYearOffsets, directionLabel } from '@/lib/signal
 import { buildPalaceEvents, type EventTone } from '@/lib/events';
 import { buildJudgment } from '@/lib/judgment';
 import { buildLifePhases } from '@/lib/phases';
+import { buildDimensionBase } from '@/lib/dimension-base';
 import { buildSystemResponse, responseBasis } from '@/lib/response';
 import {
   buildLifeLine,
@@ -203,14 +204,31 @@ function DashboardBody({
     }
   }, [birth]);
 
+  /**
+   * 六个维度的命盘基调：由对应宫位的星曜庙旺决定。
+   * 这是"这个人哪个领域天生强/弱"的来源——之前是出生日期哈希出的随机数。
+   */
+  const dimensionBase = useMemo(() => {
+    try {
+      return buildDimensionBase(birth);
+    } catch {
+      return undefined;
+    }
+  }, [birth]);
+
   const derived = useMemo(() => {
-    const points = buildLifeLine(birth, yearOffsets ?? undefined, lifePhases);
+    const points = buildLifeLine(
+      birth,
+      yearOffsets ?? undefined,
+      lifePhases,
+      dimensionBase?.offsets,
+    );
     const stage = buildStageCard(points, birth, lifePhases);
     const wanted = points.findIndex((p) => p.year === selectedYear);
     const index =
       wanted >= 0 ? wanted : Math.max(0, points.findIndex((p) => p.year === stage.year));
     return { points, stage, index, point: points[index] };
-  }, [birth, selectedYear, yearOffsets, lifePhases]);
+  }, [birth, selectedYear, yearOffsets, lifePhases, dimensionBase]);
 
   const { points, stage, point, index } = derived;
 
@@ -574,6 +592,25 @@ function DashboardBody({
               </span>
             </p>
           </div>
+
+          {/*
+            这个维度"天生厚薄"的依据：由对应宫位的星曜庙旺决定。
+            以前这一项是出生日期哈希出的随机数，所以不能给依据——
+            现在它是算出来的，就应该说出来。
+          */}
+          {dimensionBase && (
+            <p className="mt-2 text-xs leading-relaxed text-ink-3">
+              <span className="text-ink-2">命盘基调：</span>
+              {dimensionBase.reasons[dimension]}
+              {dimensionBase.offsets[dimension] !== 0 && (
+                <span className="ml-1">
+                  （这条曲线整体
+                  {dimensionBase.offsets[dimension] > 0 ? '偏高' : '偏低'}约{' '}
+                  {Math.abs(dimensionBase.offsets[dimension]).toFixed(1)} 分）
+                </span>
+              )}
+            </p>
+          )}
 
           {/* 曲线与判断同源：说明这条曲线是由真实排盘驱动的 */}
           <p
