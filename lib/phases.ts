@@ -168,10 +168,19 @@ export function buildLifePhases(birth: Parameters<typeof buildChart>[0]): LifePh
   }
 
   ranges.forEach((r) => {
+    /**
+     * 命名用**中位年龄**，不用起始年龄。
+     *
+     * 踩过的坑：原来传 r.from，于是「22-31 岁」这一大限整段按 22 岁的标准命名，
+     * 结果一个 33 岁的人会看到阶段名「感情成形期」——
+     * 因为那个大限是 22-31，起始 22 岁算"青年"。
+     * 一个大限横跨 10 年，用户可能落在其中任何一年，所以取中位更合理。
+     */
+    const midAge = Math.round((r.from + r.to) / 2);
     phases.push({
       from: r.from,
       to: r.to,
-      name: phaseName(r.palace, r.from),
+      name: phaseName(r.palace, midAge),
       palace: r.palace,
       theme: PALACE_THEME[r.palace] ?? '进程',
       stars: r.stars,
