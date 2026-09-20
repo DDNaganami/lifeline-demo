@@ -255,12 +255,15 @@ function buildPalaceImpacts(h: YearHoroscope): PalaceImpact[] {
 /**
  * 供曲线使用的「年度强弱偏移」。
  *
- * 这是让曲线**由真实排盘驱动**的关键：把两个体系的方向折算成一个
- * -20 ~ +20 的偏移量，叠加到曲线的长期形状上。
- * 这样曲线的起伏与年度卡片的依据就同源了。
+ * 组成（全部来自真实排盘）：
+ *   1. **大限台阶**：当事宫主星的庙旺利陷 → 十年一个平台
+ *      这是"人生换了主题"的体现，也是曲线看起来是台阶状而非波浪的原因
+ *   2. 流年四化是否落到当事宫 → 年内的起伏
+ *   3. 四化方向本身（禄权科为吉、忌为凶）
+ *   4. 八字流年十神 + 现行大运十神
  *
  * ⚠️ 性能要点：本命盘与八字本盘**只算一次**，循环里只做运限计算。
- *   朴素写法（每年都重排一次本命盘）88 年要 ~3.4 秒，优化后约 1 秒。
+ *   朴素写法（每年都重排一次本命盘）88 年要 ~3.4 秒，优化后约 1.1 秒。
  */
 export function buildYearOffsets(birth: BirthInfo, fromYear: number, toYear: number): Map<number, number> {
   const map = new Map<number, number>();
@@ -273,9 +276,18 @@ export function buildYearOffsets(birth: BirthInfo, fromYear: number, toYear: num
   const gender = birth.gender === '女' ? '女' : '男';
   const raw = astro.bySolar(`${by}-${bm}-${bd}`, timeIndex, gender, true, 'zh-CN');
 
+  // 星曜 → 本命盘宫位（四化落宫判断的依据）
+  const starHomePalace: Record<string, string> = {};
+  const natalMutagens: Record<string, string> = {};
+  for (const p of natal.palaces) {
+    for (const s of [...p.majorStars, ...p.minorStars]) {
+      starHomePalace[s.name] = p.name;
+      if (s.mutagen) natalMutagens[s.name] = s.mutagen;
+    }
+  }
+
   for (let year = fromYear; year <= toYear; year++) {
     try {
-      // 紫微：只算运限
       const h = raw.horoscope(`${year}-6-1`, timeIndex);
       const decadalIndex = typeof h.decadal?.index === 'number' ? h.decadal.index : 0;
       const yearlyIndex = typeof h.yearly?.index === 'number' ? h.yearly.index : 0;
@@ -286,16 +298,6 @@ export function buildYearOffsets(birth: BirthInfo, fromYear: number, toYear: num
 
       const map2 = (arr: string[] | undefined) =>
         (arr ?? []).map((star, i) => ({ star, mutagen: MUTAGEN_ORDER[i] ?? '' })).filter((x) => x.star);
-
-      // 星曜 → 本命盘宫位（四化落宫判断的依据），本命盘只算一次
-      const starHomePalace: Record<string, string> = {};
-      const natalMutagens: Record<string, string> = {};
-      for (const p of natal.palaces) {
-        for (const s of [...p.majorStars, ...p.minorStars]) {
-          starHomePalace[s.name] = p.name;
-          if (s.mutagen) natalMutagens[s.name] = s.mutagen;
-        }
-      }
 
       const horoscopeLike: YearHoroscope = {
         year,
@@ -315,9 +317,10 @@ export function buildYearOffsets(birth: BirthInfo, fromYear: number, toYear: num
         natalMutagens,
       };
 
+      // ① 大限台阶（十年一个平台）+ ② 流年四化 + ③ 四化方向
       const ziweiDir = ziweiScoreOfYear(horoscopeLike);
 
-      // 八字：只算流年 + 查大运
+      // ④ 八字：流年十神 + 现行大运十神
       const liuNianObj = Solar.fromYmdHms(year, 6, 1, 12, 0, 0).getLunar();
       const liuNianShiShen = shiShenOf(baziBase.dayMaster, liuNianObj.getYearGan());
       const daYun = baziBase.daYun.find((d) => year >= d.startYear && year <= d.endYear);

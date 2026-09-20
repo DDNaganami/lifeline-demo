@@ -14,6 +14,7 @@ import YearCard from '@/components/year-card';
 import { buildYearSignals, buildYearOffsets, directionLabel } from '@/lib/signals';
 import { buildPalaceEvents, type EventTone } from '@/lib/events';
 import { buildJudgment } from '@/lib/judgment';
+import { buildLifePhases } from '@/lib/phases';
 import { buildSystemResponse, responseBasis } from '@/lib/response';
 import {
   buildLifeLine,
@@ -190,14 +191,26 @@ function DashboardBody({
     yearCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [selectedYear]);
 
+  /**
+   * 真实人生阶段：由大限生成（起运年龄随五行局、顺序随性别）。
+   * 只算一次——它只跟出生信息有关，与选中的年份/维度无关。
+   */
+  const lifePhases = useMemo(() => {
+    try {
+      return buildLifePhases(birth);
+    } catch {
+      return undefined; // 排盘失败时退回写死的阶段表，不让页面崩
+    }
+  }, [birth]);
+
   const derived = useMemo(() => {
-    const points = buildLifeLine(birth, yearOffsets ?? undefined);
-    const stage = buildStageCard(points, birth);
+    const points = buildLifeLine(birth, yearOffsets ?? undefined, lifePhases);
+    const stage = buildStageCard(points, birth, lifePhases);
     const wanted = points.findIndex((p) => p.year === selectedYear);
     const index =
       wanted >= 0 ? wanted : Math.max(0, points.findIndex((p) => p.year === stage.year));
     return { points, stage, index, point: points[index] };
-  }, [birth, selectedYear, yearOffsets]);
+  }, [birth, selectedYear, yearOffsets, lifePhases]);
 
   const { points, stage, point, index } = derived;
 
@@ -208,7 +221,7 @@ function DashboardBody({
 
   const dimensionScore = point[dimension];
   const level = levelOf(dimensionScore);
-  const card = buildYearCard(points, index, dimension, birth);
+  const card = buildYearCard(points, index, dimension, birth, lifePhases);
 
   /**
    * 真实排盘信号：紫微（大限 + 流年四化）+ 八字（流年十神 + 大运），

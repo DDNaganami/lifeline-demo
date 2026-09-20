@@ -20,6 +20,7 @@ import type {
   Trend,
   YearCardData,
 } from './types';
+import { phaseAt, type LifePhase } from './phases';
 
 /* =========================== 基础设定 =========================== */
 
@@ -222,10 +223,18 @@ function trendOf(prev?: number, cur?: number, next?: number): Trend {
   return '震荡';
 }
 
-/** 生成从 1 岁到 88 岁的完整曲线 */
+/**
+ * 生成从 1 岁到 88 岁的完整曲线
+ *
+ * @param birth 出生信息
+ * @param yearOffsets 可选：**由真实排盘驱动的年度偏移**（见 lib/signals.ts）
+ * @param phases 可选：**由真实大限生成的人生阶段**（见 lib/phases.ts）
+ *   传入后，阶段名与边界都按这个人的命盘来，不再是所有人共用一张固定表
+ */
 export function buildLifeLine(
   birth: BirthInfo,
   yearOffsets?: Map<number, number>,
+  phases?: LifePhase[],
 ): LifeLinePoint[] {
   const birthYear = Number(birth.birthDate.slice(0, 4)) || CURRENT_YEAR - 35;
   const personSeed = `${birth.birthDate}|${birth.birthTime}|${birth.gender}`;
@@ -262,7 +271,11 @@ export function buildLifeLine(
       marriage: clamp(get('marriage', i)),
       parents: clamp(get('parents', i)),
       health: clamp(get('health', i)),
-      phase: phaseOf(age),
+      /**
+       * 人生阶段：传入了真实阶段表就用它（由大限生成），
+       * 否则退回原来的固定年龄段。
+       */
+      phase: phases ? phaseAt(phases, age).name : phaseOf(age),
       trend: '震荡', // 下面按加了偏移的最终序列重新判定
     });
   }
@@ -1180,6 +1193,7 @@ export function buildYearCard(
   index: number,
   dimension: DimensionKey,
   birth: BirthInfo,
+  phases?: LifePhase[],
 ): YearCardData {
   const point = points[index];
   const prev = points[index - 1];
@@ -1203,7 +1217,15 @@ export function buildYearCard(
     JUDGMENT_POOLS[judgeBandOf(point.age)][dimension][trend] ??
     JUDGMENT_POOLS[judgeBandOf(point.age)][dimension]['震荡'] ??
     ['这一年先把手上确定的事做好，不用急着下结论'];
-  const daxian = daxianOf(point.age);
+  /** 有真实阶段表就用它（大限由命盘生成），否则退回写死的大限 */
+  const realPhase = phases ? phaseAt(phases, point.age) : undefined;
+  const daxian = realPhase
+    ? {
+        label: `${realPhase.from}-${realPhase.to} 岁 · ${realPhase.palace}大限${
+          realPhase.stars.length ? `（${realPhase.stars.join('、')}）` : ''
+        }`,
+      }
+    : daxianOf(point.age);
 
   // 紫微与八字各取一条，并按两条信号的倾向判断「是否互相印证」
   const ziweiPick = pickOne(ZIWEI_SIGNALS, `${seed}|zw`);
@@ -1223,7 +1245,11 @@ export function buildYearCard(
     trend,
     mainJudgment: pickOne(judgmentPool, `${seed}|jd`),
     events,
-    ziweiSignal: ziweiPick.text.replace('{宫}', daxian.palace),
+    // 真实阶段里宫位名是「子女」，模板里写的是「{宫}」，拼起来才是「子女宫」
+    ziweiSignal: ziweiPick.text.replace(
+      '{宫}',
+      realPhase ? `${realPhase.palace}宫` : daxianOf(point.age).palace,
+    ),
     baziSignal: baziPick.text,
     consistency,
     actionTip: ACTION_POOL[trend],
@@ -1232,34 +1258,68 @@ export function buildYearCard(
 
 /* =========================== 当前阶段卡 =========================== */
 
-export function buildStageCard(points: LifeLinePoint[], birth: BirthInfo): StageCard {
+/**
+ * 各人生主题的说明。
+ * 键是**主题**（由大限宫位推出，见 lib/phases.ts），不是写死的阶段名——
+ * 这样换一个人的命盘，阶段名变了，说明仍然对得上。
+ */
+const THEME_SUMMARY: Record<string, string> = {
+  成长: '这一段的重点是长身体和建立安全感，家里的事比外面的事更影响你。',
+  自我: '这一段在建立"我是谁"，允许慢、允许反复，方向比速度重要。',
+  同辈: '这一段同伴的影响开始变大，学会相处比争第一更重要。',
+  伴侣: '这一段感情的分量上升，把长期安排谈清楚比急着确定更关键。',
+  传承: '这一段开始带人、也开始为后面的人安排，付出与回报不同步是正常的。',
+  财务: '这一段要把收支结构和长期安排理清楚，取舍比争取更关键。',
+  身体: '这一段身体会给出明确信号，作息和情绪要排在任务前面。',
+  外部: '这一段环境变动较多，适应力比计划性更重要。',
+  人脉: '这一段靠协作和他人的助力，主动维护关系比单打独斗划算。',
+  事业: '这一段是位置和能力的结果期，机会会来，但要求你拿得出成果。',
+  家业: '这一段以稳定和安顿为主，把根扎下来比继续扩张更值。',
+  内在: '这一段重心从外部成就回到内心和生活本身。',
+  长辈: '这一段要处理和上一代的关系与责任，提前安排比临时应对省力。',
+  进程: '这一段的重点是保持节奏，先把手上确定的事做好。',
+};
+
+export function buildStageCard(
+  points: LifeLinePoint[],
+  birth: BirthInfo,
+  phases?: LifePhase[],
+): StageCard {
   const birthYear = Number(birth.birthDate.slice(0, 4)) || CURRENT_YEAR - 35;
   const age = Math.max(MIN_AGE, Math.min(MAX_AGE, CURRENT_YEAR - birthYear));
   const point = points.find((p) => p.age === age) ?? points[points.length - 1];
-  const daxian = daxianOf(point.age);
 
-  const summaries: Record<string, string> = {
-    家庭成长期: '这一段的重点是长身体和建立安全感，家里的事比外面的事更影响你。',
-    求学起步期: '这一段的重点是习惯和兴趣，学得好不好还在其次，先看有没有人带着你。',
-    学业分化期: '这一段开始分流，选择和努力同样重要，家里的期望和自己的意愿会第一次正面碰撞。',
-    职业探索期: '这一段是试错期，方向比速度重要，允许换、也允许慢一点。',
-    成家立业内: '这一段同时要立事业和立家庭，两件事会互相挤占时间，需要排序。',
-    责任扩大期: '这一段责任变重，收入与支出同时上行，身体开始需要主动管理。',
-    职业窗口期: '这一段是位置和能力的结果期，机会会来，但要求你拿得出成果。',
-    收获整理期: '这一段是把前半生变现和整理的阶段，取舍比争取更关键。',
-    角色转换期: '这一段节奏转换，重心从外部成就回到生活和家人。',
-    回望传承期: '这一段以稳定、健康、陪伴为主，适合把经验交给后面的人。',
-  };
+  /** 有真实阶段表就用它；否则退回写死的大限说明 */
+  const phase = phases ? phaseAt(phases, point.age) : undefined;
+  const daxian = phase
+    ? `${phase.from}-${phase.to} 岁 · ${phase.palace}大限${phase.stars.length ? `（${phase.stars.join('、')}）` : ''}`
+    : daxianOf(point.age).label;
 
   return {
     age: point.age,
     year: point.year,
-    daxian: daxian.label,
+    daxian,
     phase: point.phase,
     trend: point.trend,
-    summary: summaries[point.phase] ?? '这一段的重点是保持节奏，先把手上确定的事做好。',
+    summary:
+      (phase ? THEME_SUMMARY[phase.theme] : summariesByPhaseName[point.phase]) ??
+      '这一段的重点是保持节奏，先把手上确定的事做好。',
   };
 }
+
+/** 没有真实阶段表时的兜底说明（按原来的固定阶段名） */
+const summariesByPhaseName: Record<string, string> = {
+  家庭成长期: '这一段的重点是长身体和建立安全感，家里的事比外面的事更影响你。',
+  求学起步期: '这一段的重点是习惯和兴趣，学得好不好还在其次，先看有没有人带着你。',
+  学业分化期: '这一段开始分流，选择和努力同样重要，家里的期望和自己的意愿会第一次正面碰撞。',
+  职业探索期: '这一段是试错期，方向比速度重要，允许换、也允许慢一点。',
+  成家立业内: '这一段同时要立事业和立家庭，两件事会互相挤占时间，需要排序。',
+  责任扩大期: '这一段责任变重，收入与支出同时上行，身体开始需要主动管理。',
+  职业窗口期: '这一段是位置和能力的结果期，机会会来，但要求你拿得出成果。',
+  收获整理期: '这一段是把前半生变现和整理的阶段，取舍比争取更关键。',
+  角色转换期: '这一段节奏转换，重心从外部成就回到生活和家人。',
+  回望传承期: '这一段以稳定、健康、陪伴为主，适合把经验交给后面的人。',
+};
 
 /* =========================== 反馈取用 =========================== */
 
