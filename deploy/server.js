@@ -26,6 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const stats = require('./ask-stats');
 
 /* ------------------------- 配置（含从 .env 读取密钥） ------------------------- */
 
@@ -165,6 +166,12 @@ const server = http.createServer((req, res) => {
   // 追问接口（POST）——在静态文件之前处理
   if (urlPath.split('?')[0] === '/api/ask') {
     handleAsk(req, res, started);
+    return;
+  }
+
+  // 用量查询：只给管理员看，靠 URL 上的 token 保护
+  if (urlPath.split('?')[0] === '/api/usage') {
+    handleUsage(req, res, urlPath);
     return;
   }
 
@@ -337,7 +344,6 @@ async function handleAsk(req, res, started) {
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ASK_TIMEOUT_MS);
-  const t0 = Date.now();
 
   try {
     const upstream = await fetch('https://api.deepseek.com/chat/completions', {
@@ -385,19 +391,111 @@ async function handleAsk(req, res, started) {
       usage: data.usage,
       model: data.model,
     });
+    // 用量统计：**只累计数字，不记问题/回答/key**
+    const row = stats.record(data.usage, { ok: true, ms: Date.now() - started });
     // 日志：只有长度与耗时（不记问题、不记回答、不记 key）
     console.log(
       `200  POST /api/ask  (问 ${question.length} 字 → 答 ${answer.length} 字, ` +
         `思维链 ${reasoningLen} 字, ${Date.now() - started}ms)`,
     );
+    stats.logLine(row);
   } catch (err) {
     const aborted = err?.name === 'AbortError';
     console.error(`[ask] ${aborted ? '超时' : '请求失败'}`);
+    // 失败的调用也记一次（但不计 token，因为拿不到 usage）
+    const row = stats.record(null, { ok: false, ms: Date.now() - started });
+    stats.logLine(row);
     json(res, 504, { ok: false, error: aborted ? 'timeout' : 'network' });
   } finally {
     clearTimeout(timer);
-    void t0;
   }
+}
+
+/* ------------------------- 用量查询 ------------------------- */
+
+/**
+ * GET /api/usage?token=xxx
+ *
+ * 为什么要 token 保护：这个接口会暴露"今天被问了多少次、花了多少"，
+ * 属于运营数据，不该公开。token 从环境变量 USAGE_TOKEN 读。
+ *
+ * **没有配 USAGE_TOKEN 时这个接口关闭**——默认安全，
+ * 而不是"忘了配就公开"。
+ */
+function handleUsage(req, res, urlPath) {
+  const expected = ENV.USAGE_TOKEN || '';
+  if (!expected) {
+    json(res, 404, { ok: false, error: 'disabled', hint: '服务端未配置 USAGE_TOKEN，用量接口未开启' });
+    return;
+  }
+  const q = urlPath.split('?')[1] || '';
+  const given = new URLSearchParams(q).get('token') || '';
+  // 定长比较，避免用时间差猜 token
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (!ok) {
+    json(res, 401, { ok: false, error: 'unauthorized' });
+    return;
+  }
+
+  const s = stats.summary();
+  const yuan = (n) => `¥${n.toFixed(4)}`;
+  const rows = s.daily
+    .map((d) => {
+      const avg = d.asks ? Math.round(d.tokens / d.asks) : 0;
+      const avgMs = d.asks ? Math.round(d.ms / d.asks) : 0;
+      return `<tr><td>${d.date}</td><td>${d.asks}</td><td>${d.ok}</td><td>${d.failed}</td><td>${d.tokens}</td><td>${avg}</td><td>${avgMs}ms</td></tr>`;
+    })
+    .join('');
+
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>LifeLine 追问用量</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ body{background:#0a0a09;color:#f5f2ec;font:14px/1.6 system-ui,"PingFang SC","Microsoft YaHei",sans-serif;margin:0;padding:24px}
+ h1{font-size:20px;margin:0 0 4px}
+ .sub{color:#7d776c;font-size:12px;margin-bottom:20px}
+ .cards{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:24px}
+ .card{background:#141312;border:1px solid #2b2926;border-radius:12px;padding:14px 18px;min-width:150px}
+ .card .k{color:#7d776c;font-size:12px}
+ .card .v{font-size:26px;color:#d9a441;margin-top:2px}
+ .card .s{color:#b8b2a6;font-size:12px}
+ table{border-collapse:collapse;width:100%;max-width:720px;background:#141312;border-radius:12px;overflow:hidden}
+ th,td{padding:8px 12px;text-align:right;border-bottom:1px solid #2b2926;font-variant-numeric:tabular-nums}
+ th{color:#7d776c;font-weight:400;font-size:12px;text-align:right}
+ th:first-child,td:first-child{text-align:left}
+ .note{color:#7d776c;font-size:12px;margin-top:16px;max-width:720px;line-height:1.7}
+ .warn{color:#e8be74}
+</style></head><body>
+<h1>追问用量</h1>
+<div class="sub">只统计数字，不记录问题与回答内容。金额为量级估算，请以 DeepSeek 后台账单为准。</div>
+
+<div class="cards">
+  <div class="card"><div class="k">今天</div><div class="v">${s.today.asks}</div><div class="s">${s.today.tokens} token · ${yuan(s.today.cost.total)}</div></div>
+  <div class="card"><div class="k">近 7 天</div><div class="v">${s.last7.asks}</div><div class="s">${s.last7.tokens} token · ${yuan(s.last7.cost.total)}</div></div>
+  <div class="card"><div class="k">近 30 天</div><div class="v">${s.last30.asks}</div><div class="s">${s.last30.tokens} token · ${yuan(s.last30.cost.total)}</div></div>
+  <div class="card"><div class="k">累计</div><div class="v">${s.all.asks}</div><div class="s">${s.all.days} 天 · ${s.all.tokens} token · ${yuan(s.all.cost.total)}</div></div>
+</div>
+
+<table>
+<tr><th>日期</th><th>次数</th><th>成功</th><th>失败</th><th>token</th><th>均 token</th><th>均耗时</th></tr>
+${rows || '<tr><td colspan="7" style="color:#7d776c">还没有记录</td></tr>'}
+</table>
+
+<div class="note">
+  <b>成本估算口径</b>：按输入 ¥1/百万 token、输出 ¥2/百万 token 粗算，仅用于判断量级。<br>
+  <b>数据位置</b>：服务器上的 <code>ask-stats.json</code>，保留最近 60 天。<br>
+  <b>单价变化</b>：请以 DeepSeek 后台为准。当天超过 ${stats.WARN_ASKS} 次时，服务器控制台会打醒目提示。<br>
+  ${s.today.asks >= stats.WARN_ASKS ? `<span class="warn">⚠️ 今天已超过 ${stats.WARN_ASKS} 次</span>` : ''}
+</div>
+</body></html>`;
+
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+  res.end(html);
 }
 
 server.on('error', (err) => {
@@ -430,6 +528,11 @@ server.listen(PORT, HOST, () => {
   } else {
     console.log('  AI 追问：    未启用（没读到 DS_KEY，网页会退回本地回答引擎）');
     console.log('               要启用：复制 .env.example 为 .env 并填上 DS_KEY');
+  }
+  if (ENV.USAGE_TOKEN) {
+    console.log(`  用量统计：   /api/usage?token=***（token 见 .env，不打印）`);
+  } else {
+    console.log('  用量统计：   未开启（要开启：在 .env 里配 USAGE_TOKEN）');
   }
   console.log('  ------------------------------------------');
   console.log('  外网访问：需要在路由器上把该端口转发到本机');

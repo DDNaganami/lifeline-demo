@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "LifeLine 人生战略曲线",
   description:
-    "一条可回看、可核对、可追问、可逐年使用的人生战略时间轴（第一阶段原型，使用模拟数据）",
+    "一条可回看、可核对、可追问、可逐年使用的人生战略时间轴（紫微与八字为真实排盘，含真太阳时校正）",
 };
 
 export const viewport: Viewport = {

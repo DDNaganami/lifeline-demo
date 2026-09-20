@@ -10,7 +10,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, rmSync, statSync } from 'node:fs';
+import { existsSync, rmSync, statSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const IP = '112.111.47.239';
@@ -61,6 +61,20 @@ const started = Date.now();
 
 /* ---------------- 1. 构建 ---------------- */
 step(1, '构建静态站点');
+
+/**
+ * 先做**服务端依赖自检**——本地就能发现"漏打包文件"。
+ * 这一步是补上踩过的坑：server.js 引入新依赖但没进部署包，
+ * 服务器启动报 Cannot find module，服务直接起不来（本地却看不出来）。
+ */
+const localProbe = run('node', ['deploy/probe.js', 'deploy']);
+if (localProbe.code !== 0) {
+  console.error(localProbe.out || localProbe.err);
+  console.error('\n❌ 服务端依赖自检未通过，已中止部署');
+  process.exit(1);
+}
+console.log('服务端依赖自检：通过');
+
 /**
  * 注意 Windows 的两个坑：
  *   1. spawnSync 不能直接执行 .cmd（Node 会报 EINVAL），必须经过 shell
@@ -97,16 +111,33 @@ const outDir = resolve(pkgDir, 'out');
 if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true });
 localPs(`Copy-Item -Recurse -Force '${resolve('out')}' '${outDir}'`);
 
+/**
+ * 也要刷新打包目录里的**服务端配套文件**。
+ *
+ * 这里踩过一个坑：server.js 引入了新的依赖文件 ask-stats.js，
+ * 但部署脚本只复制 out/ 和 server.js ——
+ * 结果服务器启动就报 `Cannot find module './ask-stats'`，服务起不来。
+ *
+ * 所以：deploy/ 下**所有 .js 文件**都同步进打包目录，
+ * 新增服务端文件时不用再改部署脚本。
+ */
+const SERVER_FILES = [];
+for (const name of readdirSync(resolve('deploy'))) {
+  if (name.endsWith('.js')) SERVER_FILES.push(name);
+}
+for (const name of SERVER_FILES) {
+  localPs(`Copy-Item -Force '${resolve('deploy', name)}' '${resolve(pkgDir, name)}'`);
+}
+console.log(`服务端文件已刷新：${SERVER_FILES.join('、')}`);
+
+// 自检：打包目录里的 server.js 必须与源文件一致
 const serverSrc = resolve('deploy/server.js');
 const serverDst = resolve(pkgDir, 'server.js');
-localPs(`Copy-Item -Force '${serverSrc}' '${serverDst}'`);
-
-// 自检：打出来的 server.js 必须与源文件一致（大小相同）
 if (!existsSync(serverDst) || statSync(serverDst).size !== statSync(serverSrc).size) {
   console.error('❌ 打包目录里的 server.js 与源文件不一致，已中止');
   process.exit(1);
 }
-console.log(`server.js 已刷新（${Math.round(statSync(serverSrc).size / 1024)} KB，与源文件一致）`);
+console.log(`server.js 校验通过（${Math.round(statSync(serverSrc).size / 1024)} KB）`);
 
 if (existsSync(zipPath)) rmSync(zipPath, { force: true });
 const zip = localPs(
@@ -180,14 +211,26 @@ Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorActio
 Start-Sleep -Seconds 2
 Remove-Item 'C:\\LifeLine\\LifeLine-Demo\\out' -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item "$tmp\\out" 'C:\\LifeLine\\LifeLine-Demo\\out' -Recurse -Force
-Copy-Item "$tmp\\server.js" 'C:\\LifeLine\\LifeLine-Demo\\server.js' -Force
-# 自检：服务端代码必须是新的（含追问接口），否则说明又装了旧副本
+# 覆盖**所有**服务端 js（不只是 server.js）——漏一个依赖服务就起不来
+Get-ChildItem "$tmp\\*.js" | ForEach-Object { Copy-Item $_.FullName 'C:\\LifeLine\\LifeLine-Demo\\' -Force }
+Write-Host "COPIED_JS=$((Get-ChildItem 'C:\\LifeLine\\LifeLine-Demo\\*.js').Name -join ',')"
 $srv = Get-Content 'C:\\LifeLine\\LifeLine-Demo\\server.js' -Raw
 Write-Host "SERVER_HAS_ASK=$($srv -match 'api/ask')"
 if (-not ($srv -match 'api/ask')) { Write-Host 'FAIL: 部署的 server.js 是旧版'; exit 1 }
 $envText = if (Test-Path 'C:\\LifeLine\\LifeLine-Demo\\.env') { Get-Content 'C:\\LifeLine\\LifeLine-Demo\\.env' -Raw } else { '' }
 Write-Host "HAS_ENV_KEY=$($envText -match 'DS_KEY')"
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+
+# 真正的自检：校验依赖能否解析（用 deploy/probe.js，不启动服务）
+# server.js require 的文件都必须一起打包，否则服务起不来
+$probe = & 'C:\\Program Files\\nodejs\\node.exe' 'C:\\LifeLine\\LifeLine-Demo\\probe.js' 'C:\\LifeLine\\LifeLine-Demo' 2>&1 | Out-String
+Write-Host "PROBE_OUT=$($probe.Trim())"
+if ($LASTEXITCODE -ne 0) {
+  Write-Host 'FAIL: 服务端依赖缺失或语法错误（服务会起不来）'
+  exit 1
+}
+Write-Host 'REQUIRE_OK=True'
+
 Start-ScheduledTask -TaskName 'LifeLineDemo'
 Start-Sleep -Seconds 7
 $ok = [bool](Get-NetTCPConnection -LocalPort 18080 -State Listen -ErrorAction SilentlyContinue)

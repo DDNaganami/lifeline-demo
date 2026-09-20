@@ -53,3 +53,7 @@ next-env.d.ts
 /_review/
 /.dsh-drop/
 
+
+# 追问用量的运行时统计（服务端生成，不该进仓库）
+deploy/ask-stats.json
+ask-stats.json
