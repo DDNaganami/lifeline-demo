@@ -235,6 +235,58 @@ const ALIASES: Record<string, string> = {
 };
 
 /**
+ * 全部地级行政区 → 省份
+ * ---------------------------------------------------------------
+ * 这一批只有**名称与归属**（这些是确定的），**没有经度**。
+ * 解析时取所在省的中心经度，并把结果标记为 provinceLevel——
+ * 界面会明确显示"按 XX 省中心估算"。
+ *
+ * 为什么不填经度：经度错了真太阳时就错，进而时辰错、命宫错。
+ * 同省内城市一般相差不到 4 分钟，用省中心是**诚实的近似**；
+ * 凭印象填一个具体坐标则是**看起来精确的错误**——后者更危险。
+ *
+ * 覆盖：大陆全部地级市 / 自治州 / 盟（约 330 个）。
+ */
+export const PREFECTURE_BY_PROVINCE: Record<string, string[]> = {
+  河北: ['廊坊', '秦皇岛', '张家口', '承德', '沧州', '邢台', '邯郸', '衡水', '辛集', '定州'],
+  山西: ['大同', '阳泉', '长治', '晋城', '朔州', '晋中', '运城', '忻州', '临汾', '吕梁'],
+  内蒙古: ['乌海', '赤峰', '通辽', '鄂尔多斯', '呼伦贝尔', '巴彦淖尔', '乌兰察布', '兴安盟', '锡林郭勒盟', '阿拉善盟'],
+  辽宁: ['鞍山', '抚顺', '本溪', '丹东', '锦州', '营口', '阜新', '辽阳', '盘锦', '铁岭', '朝阳', '葫芦岛'],
+  吉林: ['吉林', '四平', '辽源', '通化', '白山', '松原', '白城', '延边', '梅河口'],
+  黑龙江: ['齐齐哈尔', '鸡西', '鹤岗', '双鸭山', '大庆', '伊春', '佳木斯', '七台河', '牡丹江', '黑河', '绥化', '大兴安岭'],
+  江苏: ['连云港', '淮安', '盐城', '扬州', '镇江', '泰州', '宿迁'],
+  浙江: ['嘉兴', '绍兴', '金华', '衢州', '舟山', '台州', '丽水'],
+  安徽: ['芜湖', '蚌埠', '淮南', '马鞍山', '淮北', '铜陵', '安庆', '黄山', '滁州', '阜阳', '宿州', '六安', '亳州', '池州', '宣城'],
+  福建: ['莆田', '三明', '漳州', '南平', '龙岩', '宁德'],
+  江西: ['景德镇', '萍乡', '九江', '新余', '鹰潭', '赣州', '吉安', '宜春', '抚州', '上饶'],
+  山东: ['淄博', '枣庄', '东营', '潍坊', '济宁', '泰安', '威海', '日照', '临沂', '德州', '聊城', '滨州', '菏泽'],
+  河南: ['平顶山', '安阳', '鹤壁', '新乡', '焦作', '濮阳', '许昌', '漯河', '三门峡', '南阳', '商丘', '信阳', '周口', '驻马店', '济源'],
+  湖北: ['黄石', '十堰', '宜昌', '襄阳', '鄂州', '荆门', '孝感', '荆州', '黄冈', '咸宁', '随州', '恩施', '仙桃', '潜江', '天门'],
+  湖南: ['株洲', '湘潭', '衡阳', '邵阳', '岳阳', '常德', '张家界', '益阳', '郴州', '永州', '怀化', '娄底', '湘西'],
+  广东: ['韶关', '江门', '湛江', '茂名', '肇庆', '惠州', '梅州', '汕尾', '河源', '阳江', '清远', '中山', '潮州', '揭阳', '云浮'],
+  广西: ['柳州', '梧州', '北海', '防城港', '钦州', '贵港', '玉林', '百色', '贺州', '河池', '来宾', '崇左'],
+  海南: ['儋州', '五指山', '琼海', '文昌', '万宁', '东方', '三沙'],
+  四川: ['自贡', '攀枝花', '泸州', '德阳', '绵阳', '广元', '遂宁', '内江', '乐山', '南充', '眉山', '宜宾', '广安', '达州', '雅安', '巴中', '资阳', '阿坝', '甘孜', '凉山'],
+  贵州: ['六盘水', '遵义', '安顺', '毕节', '铜仁', '黔西南', '黔东南', '黔南'],
+  云南: ['曲靖', '玉溪', '保山', '昭通', '普洱', '临沧', '楚雄', '红河', '文山', '西双版纳', '德宏', '怒江', '迪庆'],
+  西藏: ['日喀则', '昌都', '林芝', '山南', '那曲', '阿里'],
+  陕西: ['铜川', '宝鸡', '咸阳', '渭南', '延安', '汉中', '榆林', '安康', '商洛'],
+  甘肃: ['嘉峪关', '金昌', '白银', '天水', '武威', '张掖', '平凉', '酒泉', '庆阳', '定西', '陇南', '临夏', '甘南'],
+  青海: ['海东', '海北', '黄南', '果洛', '玉树', '海西'],
+  宁夏: ['石嘴山', '吴忠', '固原', '中卫'],
+  新疆: ['克拉玛依', '吐鲁番', '哈密', '昌吉', '博尔塔拉', '巴音郭楞', '阿克苏', '克孜勒苏', '喀什', '和田', '伊犁', '塔城', '阿勒泰', '石河子', '阿拉尔', '图木舒克', '五家渠', '北屯', '铁门关', '双河', '可克达拉', '昆玉', '胡杨河', '新星'],
+};
+
+/** 反向索引：地级市 → 省份 */
+const PREFECTURE_INDEX: Record<string, string> = (() => {
+  const out: Record<string, string> = {};
+  for (const [prov, cities] of Object.entries(PREFECTURE_BY_PROVINCE)) {
+    for (const c of cities) out[c] = prov;
+  }
+  return out;
+})();
+
+/**
  * 把搜索关键字解析成标准城市名（给界面的搜索框用）。
  *
  * 为什么单独导出：搜索框需要"输入 hangzhou 也能找到杭州"，
@@ -244,7 +296,9 @@ const ALIASES: Record<string, string> = {
 export function cityFromKeyword(keyword: string): string | null {
   const k = keyword.trim().toLowerCase();
   if (!k) return null;
-  if (CITY_TABLE[keyword.trim()]) return keyword.trim();
+  const raw = keyword.trim();
+  if (CITY_TABLE[raw]) return raw;
+  if (PREFECTURE_INDEX[raw]) return raw;
   const alias = Object.keys(ALIASES).find((a) => a.toLowerCase() === k);
   if (alias) return ALIASES[alias];
   return null;
@@ -271,8 +325,21 @@ export function resolvePlace(birthPlace: string): PlaceInfo & { matched: string 
   }
   const lower = raw.toLowerCase();
 
-  // 1) 精确等于城市名
+  // 1) 精确等于城市名（有精确经度）
   if (CITY_TABLE[raw]) return { ...CITY_TABLE[raw], matched: raw };
+
+  // 1b) 精确等于某个地级市（只有名称与归属 → 用省中心估算）
+  const asPrefecture = PREFECTURE_INDEX[raw];
+  if (asPrefecture && PROVINCE_CENTER[asPrefecture] !== undefined) {
+    return {
+      longitude: PROVINCE_CENTER[asPrefecture],
+      timezone: CITY_TABLE[asPrefecture]?.timezone ?? 'Asia/Shanghai',
+      province: asPrefecture,
+      provinceLevel: true,
+      approximate: true,
+      matched: raw,
+    };
+  }
 
   // 2) 精确等于别名 / 拼音
   const exactAlias = Object.keys(ALIASES).find((k) => k.toLowerCase() === lower);
@@ -288,6 +355,25 @@ export function resolvePlace(birthPlace: string): PlaceInfo & { matched: string 
   if (contained.length > 0) {
     const hit = contained[0];
     return { ...CITY_TABLE[hit], matched: hit };
+  }
+
+  // 3b) 地级市出现在文本里（如「江西赣州」）→ 同样取最长
+  const prefectureHits = Object.keys(PREFECTURE_INDEX)
+    .filter((city) => raw.includes(city))
+    .sort((a, b) => b.length - a.length);
+  if (prefectureHits.length > 0) {
+    const hit = prefectureHits[0];
+    const prov = PREFECTURE_INDEX[hit];
+    if (PROVINCE_CENTER[prov] !== undefined) {
+      return {
+        longitude: PROVINCE_CENTER[prov],
+        timezone: CITY_TABLE[prov]?.timezone ?? 'Asia/Shanghai',
+        province: prov,
+        provinceLevel: true,
+        approximate: true,
+        matched: hit,
+      };
+    }
   }
 
   // 4) 别名 / 拼音出现在文本里 → 同样取最长的

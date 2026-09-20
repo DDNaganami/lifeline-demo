@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { CITY_TABLE, resolvePlace, cityFromKeyword } from '@/lib/solar-time';
-import { groupCities } from '@/lib/places';
+import { groupCities, hasPreciseLongitude } from '@/lib/places';
 
 interface Props {
   value: string;
@@ -28,24 +28,36 @@ export default function PlacePicker({ value, onChange, id }: Props) {
 
   const groups = useMemo(() => groupCities(), []);
 
-  /** 搜索结果：中文名、省份、拼音都能搜 */
+  /**
+   * 搜索结果：中文名、省份、拼音都能搜。
+   * 结果里既有经度精确的城市，也有按省中心估算的地级市——
+   * 两者都返回，由界面用实线/虚线区分。
+   */
   const results = useMemo(() => {
     const raw = keyword.trim();
     if (!raw) return null;
     const k = raw.toLowerCase();
-    // 拼音/英文别名先解析成标准城市名（用与真正解析出生地时同一份别名表）
     const aliasTarget = cityFromKeyword(raw);
-    return Object.keys(CITY_TABLE)
-      .filter((city) => {
-        const prov = groups.find((g) => g.cities.includes(city))?.province ?? '';
-        return (
-          city.includes(raw) ||
-          prov.includes(raw) ||
-          city.toLowerCase().includes(k) ||
-          city === aliasTarget
-        );
-      })
-      .slice(0, 40);
+
+    const precise = Object.keys(CITY_TABLE).filter((city) => {
+      const prov = groups.find((g) => g.cities.includes(city))?.province ?? '';
+      return (
+        city.includes(raw) || prov.includes(raw) || city.toLowerCase().includes(k) || city === aliasTarget
+      );
+    });
+
+    // 地级市：搜城市名本身，或搜省份时也一并列出
+    const prefectures: string[] = [];
+    for (const g of groups) {
+      for (const city of g.cities) {
+        if (CITY_TABLE[city]) continue; // 精确的已经在上面了
+        if (city.includes(raw) || g.province.includes(raw) || city === aliasTarget) {
+          prefectures.push(city);
+        }
+      }
+    }
+
+    return [...precise, ...prefectures].slice(0, 60);
   }, [keyword, groups]);
 
   const resolved = resolvePlace(value);
@@ -71,22 +83,31 @@ export default function PlacePicker({ value, onChange, id }: Props) {
         </button>
       </div>
 
-      {/* 解析结果反馈：让用户当场看到"用哪个城市、修正多少" */}
+      {/*
+        解析结果反馈。
+        ⚠️ 判断顺序很关键：**先看 provinceLevel，再看 matched**。
+        因为地级市（如赣州）也有 matched 值，但它用的是省中心经度——
+        如果先判断 matched 就会显示"已按 赣州 的经度计算"，
+        那是**界面暗示的精度高于实际精度**，跟"西宁被当成宁波"是同一类错误。
+      */}
       {value.trim() && (
         <p className="mt-1.5 text-xs leading-relaxed">
-          {resolved.matched ? (
+          {resolved.provinceLevel && resolved.province ? (
+            <span className="text-ink-3">
+              {resolved.matched && resolved.matched !== resolved.province
+                ? `没收录「${resolved.matched}」的精确经度，按 `
+                : '按 '}
+              <strong className="text-ink-2">{resolved.province}</strong> 的中心经度估算
+              （东经 {resolved.longitude}°）。
+              <span className="text-amber-800">
+                这一步能补掉约 99% 的修正量——同省内城市一般相差不到 4 分钟
+              </span>
+              ，想要更准可以从下面选一个实线框的城市。
+            </span>
+          ) : resolved.matched ? (
             <span className="text-ink-3">
               已按 <strong className="text-ink-2">{resolved.matched}</strong> 的经度计算
               （东经 {resolved.longitude}°）
-            </span>
-          ) : resolved.provinceLevel && resolved.province ? (
-            <span className="text-ink-3">
-              按 <strong className="text-ink-2">{resolved.province}</strong> 的中心经度估算
-              （东经 {resolved.longitude}°）。
-              <span className="text-amber-800">
-                这一项能补掉约 99% 的修正量——同省内城市一般相差不到 4 分钟
-              </span>
-              ，想要更准可以从下面选一个具体城市。
             </span>
           ) : (
             <span className="text-amber-800">
@@ -121,47 +142,69 @@ export default function PlacePicker({ value, onChange, id }: Props) {
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
-                  {results.map((city) => (
-                    <button
-                      key={city}
-                      type="button"
-                      onClick={() => {
-                        onChange(city);
-                        setOpen(false);
-                        setKeyword('');
-                      }}
-                      className="rounded-lg border border-line bg-paper px-2.5 py-1.5 text-xs text-ink-2 transition hover:border-accent hover:text-accent"
-                    >
-                      {city}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="thin-scroll mt-3 max-h-64 space-y-3 overflow-y-auto">
-              {groups.map((g) => (
-                <div key={g.province}>
-                  <p className="text-xs font-medium text-ink-3">{g.province}</p>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {g.cities.map((city) => (
+                  {results.map((city) => {
+                    const precise = hasPreciseLongitude(city);
+                    return (
                       <button
                         key={city}
                         type="button"
                         onClick={() => {
                           onChange(city);
                           setOpen(false);
+                          setKeyword('');
                         }}
+                        title={precise ? '经度精确' : '按所在省的中心经度估算'}
                         className={
                           'rounded-lg border px-2.5 py-1.5 text-xs transition ' +
-                          (value === city
-                            ? 'border-accent bg-accent-soft text-accent'
-                            : 'border-line bg-paper text-ink-2 hover:border-accent hover:text-accent')
+                          (precise
+                            ? 'border-line bg-paper text-ink-2 hover:border-accent hover:text-accent'
+                            : 'border-dashed border-line bg-transparent text-ink-3 hover:border-accent hover:text-accent')
                         }
                       >
                         {city}
                       </button>
-                    ))}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="thin-scroll mt-3 max-h-72 space-y-3 overflow-y-auto">
+              {groups.map((g) => (
+                <div key={g.province}>
+                  <p className="text-xs font-medium text-ink-3">
+                    {g.province}
+                    {g.preciseCount < g.cities.length && (
+                      <span className="ml-1.5 font-normal text-ink-3/70">
+                        （前 {g.preciseCount} 个有精确经度，其余按省中心估算）
+                      </span>
+                    )}
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {g.cities.map((city) => {
+                      const precise = hasPreciseLongitude(city);
+                      return (
+                        <button
+                          key={city}
+                          type="button"
+                          onClick={() => {
+                            onChange(city);
+                            setOpen(false);
+                          }}
+                          title={precise ? '经度精确' : '按所在省的中心经度估算'}
+                          className={
+                            'rounded-lg border px-2.5 py-1.5 text-xs transition ' +
+                            (value === city
+                              ? 'border-accent bg-accent-soft text-accent'
+                              : precise
+                                ? 'border-line bg-paper text-ink-2 hover:border-accent hover:text-accent'
+                                : 'border-dashed border-line bg-transparent text-ink-3 hover:border-accent hover:text-accent')
+                          }
+                        >
+                          {city}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
@@ -169,8 +212,8 @@ export default function PlacePicker({ value, onChange, id }: Props) {
           )}
 
           <p className="mt-3 border-t border-line pt-2 text-xs leading-relaxed text-ink-3">
-            经度决定真太阳时的修正量（每差 1 度约 4 分钟）。找不到自己出生的县，
-            填最近的<b>地级市</b>即可，误差通常在几分钟内。
+            实线框的城市经度精确；<b>虚线框</b>是按所在省的中心经度估算的——
+            同省内一般相差不到 4 分钟，够用。找不到自己出生的县，填所属地级市即可。
           </p>
         </div>
       )}
