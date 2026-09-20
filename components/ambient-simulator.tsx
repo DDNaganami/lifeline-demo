@@ -3,10 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import QrCode from '@/components/qr-code';
-import { buildAlmanac, buildDailyContent } from '@/lib/almanac';
-import { buildLifeLine, buildStageCard } from '@/lib/mock-data';
+import { buildTodayScreen, buildWeekScreen, buildAlmanacScreen } from '@/lib/device-feed';
 import { loadBirth } from '@/lib/storage';
 import type { BirthInfo } from '@/lib/types';
+
+/** Date → YYYY-MM-DD（设备接口用的就是这种格式） */
+function toISO(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 /**
  * LifeLine 桌面设备模拟器
@@ -67,8 +71,19 @@ function formatClock(d: Date): string {
 
 /* ============================ 屏幕 1：黄历 ============================ */
 
+/**
+ * 黄历屏 —— **真实数据**
+ *
+ * 之前这一屏用的是 lib/almanac.ts 的 buildAlmanac()，它是原型阶段的模拟实现：
+ *   宜忌从池子里按日期取、方位只有两个、**"煞北"是写死的**、
+ *   农历日用 `(seed + 6) % 30` 推算。
+ * 而今日页用的是 lunar-typescript 的真实黄历——同一台设备两处黄历不一致会很怪。
+ *
+ * 现在统一走 lib/device-feed.ts 的 buildAlmanacScreen()，
+ * 也就是固件要消费的那份数据（黄历本地可算，断网也能用）。
+ */
 function AlmanacScreen({ date }: { date: Date }) {
-  const a = useMemo(() => buildAlmanac(date), [date]);
+  const a = useMemo(() => buildAlmanacScreen(toISO(date)), [date]);
   return (
     <div className="flex h-full flex-col">
       <div className={STATUS_BAR}>
@@ -78,19 +93,16 @@ function AlmanacScreen({ date }: { date: Date }) {
 
       <div className="px-8 pt-1">
         <div className="flex items-baseline justify-between">
-          <span className="text-[28px] text-[#e8e3d9]">{a.solarDate}</span>
+          <span className="text-[28px] text-[#e8e3d9]">{a.date}</span>
           <span className="text-[24px] text-[#8b8578]">{a.weekday}</span>
         </div>
       </div>
 
       <div className="px-8 pt-2">
-        <div className="text-[96px] leading-[1.05] text-[#d9a441]">{a.lunarDay}</div>
-        <div className="mt-3 text-[26px] text-[#c9c2b4]">
-          {a.yearGanZhi} {a.dayGanZhi}
-        </div>
-        <div className="mt-1 text-[22px] text-[#8b8578]">
-          {a.lunarMonth} · {a.solarTerm}
-        </div>
+        {/* 大字：农历日。周围不再重复它 */}
+        <div className="text-[96px] leading-[1.05] text-[#d9a441]">{a.bigLunarDay}</div>
+        <div className="mt-3 text-[26px] text-[#c9c2b4]">{a.ganzhi}</div>
+        <div className="mt-1 text-[22px] text-[#8b8578]">{a.lunar} · 农历</div>
       </div>
 
       <div className="mx-8 mt-4 h-px bg-[#2e2b26]" />
@@ -98,20 +110,19 @@ function AlmanacScreen({ date }: { date: Date }) {
       <div className="px-8 pt-4">
         <div className="flex items-center gap-4">
           <span className="w-[46px] shrink-0 text-[30px] text-[#6fae7f]">宜</span>
-          <span className="text-[28px] text-[#e8e3d9]">{a.good.join(' · ')}</span>
+          <span className="text-[28px] text-[#e8e3d9]">{a.yi.join(' · ')}</span>
         </div>
         <div className="mt-3 flex items-center gap-4">
           <span className="w-[46px] shrink-0 text-[30px] text-[#c4705f]">忌</span>
-          <span className="text-[28px] text-[#e8e3d9]">{a.bad.join(' · ')}</span>
+          <span className="text-[28px] text-[#e8e3d9]">{a.ji.join(' · ')}</span>
         </div>
       </div>
 
       <div className="mt-auto px-8 pb-7">
         <div className="flex items-center justify-between text-[22px] text-[#8b8578]">
-          <span>
-            {a.directions.map((d) => `${d.label} ${d.value}`).join('　')}
-          </span>
-          <span>{a.clash}煞北</span>
+          <span>{a.chong}</span>
+          {/* 煞是方位，来自真实黄历，不再写死 */}
+          <span>煞{a.sha}</span>
         </div>
       </div>
     </div>
@@ -120,15 +131,40 @@ function AlmanacScreen({ date }: { date: Date }) {
 
 /* ============================ 屏幕 2：今日 ============================ */
 
+/**
+ * 今日屏 —— **真实数据**。
+ *
+ * 数据来自 lib/device-feed.ts 的 buildTodayScreen()，它就是固件要消费的那个结构：
+ * 能量等级、一句结论、当日宫位、身体提醒。设备只负责渲染，不排盘。
+ *
+ * 之前这一屏用的是模拟内容（buildDailyContent），
+ * 所以给硬件同事看时会问"这是真的还是画的"——现在不用解释了。
+ */
 function TodayScreen({ date, birth }: { date: Date; birth: BirthInfo }) {
-  const daily = useMemo(() => buildDailyContent(date), [date]);
-  const stage = useMemo(() => {
-    const points = buildLifeLine(birth);
-    return buildStageCard(points, birth);
-  }, [birth]);
+  const [screen, setScreen] = useState<ReturnType<typeof buildTodayScreen> | null>(null);
 
-  const birthYear = Number(birth.birthDate.slice(0, 4));
-  const chapterYear = stage.age - (new Date().getFullYear() - birthYear) + 1;
+  useEffect(() => {
+    // 排盘要算一整个月的窗口（约 200ms），推迟到首屏渲染之后再算
+    const timer = window.setTimeout(() => {
+      try {
+        setScreen(buildTodayScreen(birth, toISO(date)));
+      } catch {
+        setScreen(null);
+      }
+    }, 30);
+    return () => window.clearTimeout(timer);
+  }, [birth, date]);
+
+  if (!screen) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <span className="text-[24px] text-[#8b8578]">正在按你的命盘算今天…</span>
+      </div>
+    );
+  }
+
+  const energyColor =
+    screen.energyValue >= 58 ? '#d9a441' : screen.energyValue >= 42 ? '#c9c2b4' : '#c4705f';
 
   return (
     <div className="flex h-full flex-col">
@@ -140,24 +176,24 @@ function TodayScreen({ date, birth }: { date: Date; birth: BirthInfo }) {
       <div className="px-8 pt-1 text-[20px] text-[#8b8578]">今日能量</div>
 
       <div className="px-8 pt-1">
-        <div className="text-[56px] leading-[1.1] text-[#d9a441]">{daily.energyWord}</div>
-        <div className="mt-3 text-[30px] leading-[1.35] text-[#e8e3d9]">{daily.energyLine}</div>
+        <div className="text-[56px] leading-[1.1]" style={{ color: energyColor }}>
+          {screen.energyLabel}
+        </div>
+        <div className="mt-3 text-[30px] leading-[1.35] text-[#e8e3d9]">{screen.headline}</div>
       </div>
 
       <div className="mx-8 mt-5 h-px bg-[#2e2b26]" />
 
       <div className="px-8 pt-5">
-        <div className="text-[20px] text-[#8b8578]">你正处在</div>
-        <div className="mt-1 text-[40px] leading-[1.15] text-[#e8e3d9]">{stage.phase}</div>
-        <div className="mt-2 text-[22px] text-[#8b8578]">
-          {stage.daxian.split(' · ')[0]} · 第 {chapterYear} 年
+        <div className="text-[20px] text-[#8b8578]">今日关注</div>
+        <div className="mt-1 text-[40px] leading-[1.15] text-[#e8e3d9]">
+          {screen.focusPalace}
         </div>
+        <div className="mt-2 text-[22px] text-[#8b8578]">{screen.focusTheme}</div>
       </div>
 
       <div className="mt-auto px-8 pb-7 text-[26px] leading-[1.4] text-[#c9c2b4]">
-        今年不宜盲目扩张，
-        <br />
-        先处理健康和家庭责任。
+        {screen.healthNote}
       </div>
     </div>
   );
@@ -165,9 +201,33 @@ function TodayScreen({ date, birth }: { date: Date; birth: BirthInfo }) {
 
 /* ============================ 屏幕 3：未来 7 天 ============================ */
 
-function WeekScreen({ date }: { date: Date }) {
-  const daily = useMemo(() => buildDailyContent(date), [date]);
-  const todayIndex = (date.getDay() + 6) % 7; // 周一为 0
+/**
+ * 未来 7 天屏 —— **真实数据**。
+ * 数值同样来自流日排盘，且用同一个「当月窗口」归一化，所以高低可比。
+ */
+function WeekScreen({ date, birth }: { date: Date; birth: BirthInfo }) {
+  const [screen, setScreen] = useState<ReturnType<typeof buildWeekScreen> | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        setScreen(buildWeekScreen(birth, toISO(date)));
+      } catch {
+        setScreen(null);
+      }
+    }, 30);
+    return () => window.clearTimeout(timer);
+  }, [birth, date]);
+
+  if (!screen) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <span className="text-[24px] text-[#8b8578]">正在算未来 7 天…</span>
+      </div>
+    );
+  }
+
+  const max = Math.max(...screen.days.map((d) => d.value));
 
   return (
     <div className="flex h-full flex-col">
@@ -179,27 +239,23 @@ function WeekScreen({ date }: { date: Date }) {
       <div className="px-8 pt-2 text-[28px] text-[#e8e3d9]">未来 7 天</div>
 
       <div className="mt-6 flex items-end justify-between px-8">
-        {daily.week.map((w, i) => {
-          const isToday = i === todayIndex;
+        {screen.days.map((d, i) => {
+          const isToday = i === 0;
+          // 三档颜色：设备上不用连续色阶，只有"高/中/低"
+          const color = d.level === 'high' ? '#d9a441' : d.level === 'mid' ? '#8b8578' : '#c4705f';
           return (
-            <div key={w.label} className="flex w-[46px] flex-col items-center">
+            <div key={d.label + i} className="flex w-[46px] flex-col items-center">
               <span className={'text-[22px] ' + (isToday ? 'text-[#d9a441]' : 'text-[#8b8578]')}>
-                {w.label}
+                {d.label}
               </span>
               <div
-                className={
-                  'mt-2 w-[34px] rounded-t ' +
-                  (isToday ? 'bg-[#d9a441]' : 'bg-[#3a3630]')
-                }
-                style={{ height: `${Math.round((w.value / 100) * 150)}px` }}
+                className="mt-2 w-[34px] rounded-t"
+                style={{
+                  height: `${Math.max(12, Math.round((d.value / max) * 150))}px`,
+                  backgroundColor: color,
+                  opacity: isToday ? 1 : 0.7,
+                }}
               />
-              <span
-                className={
-                  'mt-2 text-[24px] ' + (isToday ? 'text-[#d9a441]' : 'text-[#c9c2b4]')
-                }
-              >
-                {w.word}
-              </span>
             </div>
           );
         })}
@@ -208,11 +264,14 @@ function WeekScreen({ date }: { date: Date }) {
       <div className="mx-8 mt-6 h-px bg-[#2e2b26]" />
 
       <div className="px-8 pt-5 text-[30px] leading-[1.4] text-[#e8e3d9]">
-        {daily.weekLine}
+        这几天里，
+        <br />
+        {screen.days.reduce((best, d) => (d.value > best.value ? d : best), screen.days[0]).label}
+        最顺，平均 {screen.average}。
       </div>
 
       <div className="mt-auto px-8 pb-7 text-[22px] text-[#8b8578]">
-        数值为相对高低，不显示具体分数
+        柱高按当月相对高低画，不是绝对分数
       </div>
     </div>
   );
@@ -435,26 +494,29 @@ export default function AmbientSimulator({
     setClippedText(clipped.slice(0, 8));
   }, [shape, screen, date]);
 
-  const charCount: Record<ScreenKey, number> = useMemo(() => {
-    const a = buildAlmanac(date);
-    const d = buildDailyContent(date);
-    return {
-      almanac:
-        (a.solarDate + a.weekday + a.lunarDay + a.yearGanZhi + a.dayGanZhi + a.lunarMonth + a.solarTerm + a.good.join('') + a.bad.join('') + a.directions.map((x) => x.label + x.value).join('') + a.clash).length,
-      today:
-        (d.energyWord + d.energyLine + '今日能量你正处在今年不宜盲目扩张先处理健康和家庭责任').length,
-      week: (d.weekLine + '未来7天' + d.week.map((w) => w.label + w.word).join('')).length,
-      voice: '我在听2028年我该换工作吗说出你的问题或按一下结束'.length,
-      qr: '想看完整曲线？用手机扫码看曲线年度卡片我的档案'.length,
-      idle: 'LIFELINE'.length + 6,
-    };
-  }, [date]);
+  /**
+   * 字数统计：**直接读屏幕上真实渲染出来的文字**。
+   *
+   * 之前这里是用模拟数据单独拼一遍算的，所以屏幕换成真实数据之后，
+   * 统计出来的数字和屏幕内容对不上（比如屏幕上没有"你正处在"了，统计里还在算）。
+   * 现在统一从 DOM 里取，屏幕显示什么就算什么。
+   */
+  const [charCount, setCharCount] = useState<Record<ScreenKey, number>>({
+    almanac: 0, today: 0, week: 0, voice: 0, qr: 0, idle: 0,
+  });
+
+  useEffect(() => {
+    const el = screenRef.current;
+    if (!el) return;
+    const text = el.innerText.replace(/\s+/g, '');
+    setCharCount((prev) => (prev[screen] === text.length ? prev : { ...prev, [screen]: text.length }));
+  }, [screen, date, shape]);
 
   const notes: Record<ScreenKey, string> = {
-    almanac: '数据来源：本地算。断网也有内容，是设备「永远不空」的底。',
-    today: '数据来源：服务器每天拉一次（几百字节）。断网时用缓存。',
-    week: '数据来源：同今日，一次拉取即可覆盖 7 天。',
-    voice: '唤醒词在本地识别（免费、即时）；真正的问答上云，按次计费。',
+    almanac: '数据来源：**本地算**（真实黄历）。断网也有内容，是设备「永远不空」的底。',
+    today: '数据来源：**流日排盘**（服务器每天下一次）。断网时用缓存。',
+    week: '数据来源：同今日，一次拉取覆盖 7 天。柱高按当月相对高低画。',
+    voice: '唤醒词在本地识别（免费、即时）；真正的问答上云，按次计费。**这一屏还没接**。',
     qr: '曲线、年度卡片、核对档案在 480×480 上放不下——与其塞一个残缺版，不如让设备把手机变成大屏。二维码地址由服务端下发（见 ESP32 规格）。',
     idle: '长时间无人或夜间显示，避免烧屏、也更省电。',
   };
@@ -507,7 +569,7 @@ export default function AmbientSimulator({
             >
               {screen === 'almanac' && <AlmanacScreen date={date} />}
               {screen === 'today' && <TodayScreen date={date} birth={birth} />}
-              {screen === 'week' && <WeekScreen date={date} />}
+              {screen === 'week' && <WeekScreen date={date} birth={birth} />}
               {screen === 'voice' && <VoiceScreen />}
               {screen === 'idle' && <IdleScreen date={date} />}
               {screen === 'qr' && <QrScreen />}
@@ -689,18 +751,35 @@ export default function AmbientSimulator({
             <h2 className="text-sm font-medium text-ink-2">当前数据来源</h2>
             <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-ink-2">
               <li>
-                · 黄历：<span className="text-ink">本地离线算（模拟实现）</span>，
-                将来换成 <code className="rounded bg-paper px-1">lunar-typescript</code> 只改一个文件
+                · <strong className="text-teal-800">黄历</strong>：真实数据，
+                <span className="text-ink">本地离线计算</span>（断网也能用）
               </li>
-              <li>· 今日能量 / 7 天：模拟内容，将来由服务器每日推送</li>
-              <li>· 人生章节：{usingDemo ? '示例出生信息（1993-06-18）' : '你填写的出生信息'}</li>
-              <li>· 语音：界面演示，未接唤醒与识别</li>
+              <li>
+                · <strong className="text-teal-800">今日能量 / 未来 7 天</strong>：真实数据，
+                由<span className="text-ink">流日四化 + 当事宫星曜庙旺</span>算出
+              </li>
+              <li>
+                · 出生信息：{usingDemo ? '示例数据（1993-06-18 杭州）' : '你填写的出生信息'}
+              </li>
+              <li>
+                · <strong className="text-amber-800">语音</strong>：界面演示，
+                <span className="text-ink">未接唤醒与识别</span>
+              </li>
             </ul>
             {usingDemo && (
               <p className="mt-3 text-xs text-ink-3">
-                还没有填写出生信息，所以章节部分用示例数据演示。回到首页填写后，这一屏会跟着变。
+                还没有填写出生信息，所以今日/7 天用示例出生信息演示。回到首页填写后，这两屏会跟着变。
               </p>
             )}
+
+            <p className="mt-3 border-t border-line pt-3 text-xs leading-relaxed text-ink-3">
+              <strong className="text-ink-2">给固件同事：</strong>
+              这两屏消费的是
+              <code className="mx-1 rounded bg-paper px-1">lib/device-feed.ts</code>
+              里的结构（<code className="rounded bg-paper px-1">DeviceDailyFeed</code>），
+              就是设备每天要拉的 JSON。设备**不排盘**，只渲染——
+              排盘在服务端，算完下发。
+            </p>
           </section>
 
           <p className="text-xs leading-relaxed text-ink-3">
