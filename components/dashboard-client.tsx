@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import ChenTeacherPanel from '@/components/chen-teacher-panel';
 import ContinueReview from '@/components/continue-review';
 import DimensionTabs from '@/components/dimension-tabs';
@@ -65,8 +65,15 @@ function formatBirth(info: BirthInfo): string {
 
 export default function DashboardClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [birth, setBirth] = useState<BirthInfo | null>(null);
   const [ready, setReady] = useState(false);
+  /** 从首页带着问题进来时的上下文 */
+  const [asked, setAsked] = useState<{
+    question: string;
+    dimension?: DimensionKey;
+    year?: number;
+  } | null>(null);
 
   // 出生信息只存在浏览器本地，只能在客户端挂载后读取一次
   useEffect(() => {
@@ -80,6 +87,20 @@ export default function DashboardClient() {
     setReady(true);
   }, [router]);
 
+  // 从首页点问题进来时，把问题与目标维度/年份读出来
+  useEffect(() => {
+    const q = searchParams.get('q');
+    if (!q) return;
+    const dim = searchParams.get('dim');
+    const year = searchParams.get('year');
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 读取地址栏参数
+    setAsked({
+      question: q,
+      dimension: (dim as DimensionKey) ?? undefined,
+      year: year ? Number(year) : undefined,
+    });
+  }, [searchParams]);
+
   if (!ready || !birth) {
     return (
       <main className="flex flex-1 items-center justify-center px-6 py-20">
@@ -89,13 +110,28 @@ export default function DashboardClient() {
   }
 
   // key 保证换人填写时内部状态全部重置
-  return <DashboardBody key={birth.birthDate + birth.birthTime} birth={birth} />;
+  return (
+    <DashboardBody
+      key={birth.birthDate + birth.birthTime}
+      birth={birth}
+      asked={asked}
+      onClearAsked={() => setAsked(null)}
+    />
+  );
 }
 
-function DashboardBody({ birth }: { birth: BirthInfo }) {
+function DashboardBody({
+  birth,
+  asked,
+  onClearAsked,
+}: {
+  birth: BirthInfo;
+  asked: { question: string; dimension?: DimensionKey; year?: number } | null;
+  onClearAsked: () => void;
+}) {
   const router = useRouter();
-  const [dimension, setDimension] = useState<DimensionKey>('overall');
-  const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const [dimension, setDimension] = useState<DimensionKey>(asked?.dimension ?? 'overall');
+  const [selectedYear, setSelectedYear] = useState<number | null>(asked?.year ?? null);
   const [feedbackMap, setFeedbackMap] = useState<FeedbackMap>(() => loadFeedback());
   const [notes, setNotes] = useState<YearNoteMap>(() => loadNotes());
   const [panelOpen, setPanelOpen] = useState(false);
@@ -361,6 +397,31 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
       </div>
 
       <main className="mx-auto w-full max-w-6xl space-y-6 px-5 py-6 sm:px-8 sm:py-8">
+        {/* 从首页带过来的问题：钉在最上面，让用户一眼看到他问的那件事 */}
+        {asked && (
+          <section className="rounded-2xl border border-accent/30 bg-accent-soft px-5 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs text-ink-3">你问的是</p>
+                <p className="mt-1 text-lg leading-relaxed text-ink">{asked.question}</p>
+                <p className="mt-1.5 text-xs text-ink-3">
+                  已定位到
+                  <strong className="text-ink-2">{DIMENSION_LABEL[dimension]}</strong>
+                  维度 · <strong className="text-ink-2">{point.year} 年</strong>
+                  （{point.age} 岁）——下面的曲线与年度卡片就是这个问题的答案。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onClearAsked}
+                className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink-2 transition hover:border-line-strong"
+              >
+                看别的
+              </button>
+            </div>
+          </section>
+        )}
+
         {/* 当前阶段卡 */}
         <section className={CARD_CLS}>
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -483,7 +544,7 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
           <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line pt-4 text-xs text-ink-3">
             <span className="flex items-center gap-1.5">
               <svg width="26" height="8" aria-hidden>
-                <line x1="0" y1="4" x2="26" y2="4" stroke="#a8531f" strokeWidth="2.4" />
+                <line x1="0" y1="4" x2="26" y2="4" stroke="#d9a441" strokeWidth="2.4" />
               </svg>
               已经发生的年份（实线）
             </span>
@@ -494,7 +555,7 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
                   y1="4"
                   x2="26"
                   y2="4"
-                  stroke="#a8531f"
+                  stroke="#d9a441"
                   strokeWidth="2.4"
                   strokeDasharray="6 4"
                 />
@@ -503,7 +564,7 @@ function DashboardBody({ birth }: { birth: BirthInfo }) {
             </span>
             <span className="flex items-center gap-1.5">
               <svg width="8" height="12" aria-hidden>
-                <line x1="4" y1="0" x2="4" y2="12" stroke="#a8531f" strokeWidth="2" />
+                <line x1="4" y1="0" x2="4" y2="12" stroke="#d9a441" strokeWidth="2" />
               </svg>
               现在
             </span>

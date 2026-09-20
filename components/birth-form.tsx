@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { buildTrueSolarTime } from '@/lib/solar-time';
 import { saveBirth } from '@/lib/storage';
 import type { BirthInfo } from '@/lib/types';
@@ -64,6 +64,7 @@ const fieldClass =
 
 export default function BirthForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [name, setName] = useState('');
   const [gender, setGender] = useState<BirthInfo['gender']>('男');
   const [birthDate, setBirthDate] = useState('');
@@ -118,7 +119,18 @@ export default function BirthForm() {
       birthTimeConfidence: birthTime.includes('不确定') ? 'unknown' : timeConfidence,
       birthPlace: birthPlace.trim(),
     });
-    router.push('/dashboard');
+
+    /**
+     * 从首页点问题进来的话，把问题带到仪表盘——
+     * 用户落地就直接看到他问的那件事，不用再自己找维度。
+     */
+    const carried = new URLSearchParams();
+    for (const key of ['q', 'dim', 'year'] as const) {
+      const v = searchParams.get(key);
+      if (v) carried.set(key, v);
+    }
+    const suffix = carried.toString() ? `?${carried.toString()}` : '';
+    router.push(`/dashboard/${suffix}`);
   }
 
   return (

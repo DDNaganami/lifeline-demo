@@ -27,11 +27,20 @@ const BAND_LINES = [
   { value: 22, label: '低位' },
 ];
 
-const COLOR_LINE = '#a8531f';
-const COLOR_AREA_FROM = 'rgba(168, 83, 31, 0.18)';
-const COLOR_AREA_TO = 'rgba(168, 83, 31, 0.01)';
-const COLOR_GRID = '#e6e1d6';
-const COLOR_TEXT = '#857c69';
+/**
+ * 曲线的颜色（深色主题，与设备模拟器、海外版设计稿一致）
+ * 这些是 SVG 内部字面量——CSS 变量在 SVG 属性里可用，但为了可读性
+ * 集中放在这里，改主题时一处生效。
+ */
+const COLOR_LINE = '#d9a441'; // 金：主曲线
+const COLOR_AREA_FROM = 'rgba(217, 164, 65, 0.20)';
+const COLOR_AREA_TO = 'rgba(217, 164, 65, 0.01)';
+const COLOR_GRID = '#2b2926'; // 深色底上的参考线
+const COLOR_TEXT = '#7d776c'; // 轴标签
+const COLOR_AXIS = '#3d3a35'; // 轴线
+const COLOR_SELECTED = '#7fd1bf'; // 选中年的高亮竖线（青，与金区分）
+const COLOR_TOOLTIP_BG = '#f5f2ec'; // 悬浮提示底（浅底反色）
+const COLOR_TOOLTIP_TEXT = '#17150f';
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
@@ -169,7 +178,7 @@ export default function LifeCurve({
           y1={PAD.top + PLOT_H}
           x2={W - PAD.right}
           y2={PAD.top + PLOT_H}
-          stroke="#d6cec0"
+          stroke={COLOR_AXIS}
           strokeWidth={1}
         />
         {ticks.map((age) => {
@@ -182,7 +191,7 @@ export default function LifeCurve({
                 y1={PAD.top + PLOT_H}
                 x2={x}
                 y2={PAD.top + PLOT_H + 5}
-                stroke="#d6cec0"
+                stroke={COLOR_AXIS}
                 strokeWidth={1}
               />
               <text
@@ -200,7 +209,7 @@ export default function LifeCurve({
                 y={PAD.top + PLOT_H + 40}
                 textAnchor="middle"
                 fontSize={11}
-                fill={isCurrent ? COLOR_LINE : '#a9a294'}
+                fill={isCurrent ? COLOR_LINE : COLOR_TEXT}
               >
                 {birthYear + age}
               </text>
@@ -246,7 +255,7 @@ export default function LifeCurve({
           textAnchor="middle"
           fontSize={11}
           fontWeight={600}
-          fill="#ffffff"
+          fill={COLOR_TOOLTIP_TEXT}
         >
           现在
         </text>
@@ -258,7 +267,7 @@ export default function LifeCurve({
             y1={PAD.top}
             x2={selected.x}
             y2={PAD.top + PLOT_H}
-            stroke="#0f766e"
+            stroke={COLOR_SELECTED}
             strokeWidth={1.4}
             strokeDasharray="3 3"
           />
@@ -296,7 +305,7 @@ export default function LifeCurve({
                 cx={c.x}
                 cy={c.y}
                 r={isSelected ? 6 : isCurrent ? 5 : 2.6}
-                fill={isSelected || isCurrent ? COLOR_LINE : '#ffffff'}
+                fill={isSelected || isCurrent ? COLOR_LINE : COLOR_GRID}
                 stroke={COLOR_LINE}
                 strokeWidth={isSelected || isCurrent ? 2.4 : 1.6}
                 pointerEvents="none"
@@ -305,7 +314,7 @@ export default function LifeCurve({
           );
         })}
 
-        {/* 悬浮提示 */}
+        {/* 悬浮提示：深色底上用浅底反色，保证在任何位置都能读清 */}
         {selected && (
           <g pointerEvents="none">
             <rect
@@ -314,15 +323,16 @@ export default function LifeCurve({
               width={124}
               height={34}
               rx={9}
-              fill="#17150f"
-              opacity={0.9}
+              fill={COLOR_TOOLTIP_BG}
+              opacity={0.95}
             />
             <text
               x={clamp(selected.x - 62, PAD.left - 20, W - PAD.right - 104) + 62}
               y={clamp(selected.y - 46, 6, PAD.top + PLOT_H - 40) + 22}
               textAnchor="middle"
               fontSize={12.5}
-              fill="#ffffff"
+              fontWeight={500}
+              fill={COLOR_TOOLTIP_TEXT}
             >
               {selected.year} 年 · {selected.age} 岁
             </text>
