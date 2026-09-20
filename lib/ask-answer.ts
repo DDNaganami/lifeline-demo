@@ -268,10 +268,54 @@ export function answerPrompt(question: string, ctx: AskContext): string {
 /**
  * 回答入口。
  *
- * **接真实模型时改这里**：把 buildLocalAnswer 换成模型调用，
- * 提示词用 answerPrompt()。其余代码不用动。
+ * 数据流：
+ *   浏览器 → POST /api/ask（本站的 Node 服务）→ DeepSeek
+ *
+ * **为什么必须走后端代理**：
+ *   1. **key 不能进浏览器** —— 仓库是公开的，网页代码任何人都能看到
+ *   2. 本项目是静态导出（`output: 'export'`），Next 的 API 路由用不了，
+ *      所以代理做在 deploy/server.js 里（就是那个零依赖静态服务器）
+ *
+ * 降级：服务端没配 key、或调用失败时，**自动退回本地规则引擎**——
+ * 用户不会因为服务端问题而问不了问题，只是回答风格不同。
  */
 export async function answerQuestion(question: string, ctx: AskContext): Promise<AskAnswer> {
-  // 当前：本地引擎（不联网、不花钱、确定）
-  return buildLocalAnswer(question, ctx);
+  const local = buildLocalAnswer(question, ctx);
+
+  try {
+    const res = await fetch('/api/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // 只把**已算好的盘面事实**发过去，模型不许自己推命理
+      body: JSON.stringify({ question, contextPrompt: answerPrompt(question, ctx) }),
+    });
+
+    // 服务端没配 key（503）或限流（429）→ 静默用本地引擎，不打扰用户
+    if (!res.ok) return local;
+
+    const data = (await res.json()) as {
+      ok?: boolean;
+      answer?: string;
+      model?: string;
+      usage?: { completion_tokens?: number };
+    };
+    if (!data.ok || !data.answer) return local;
+
+    return {
+      // 模型返回的是整段文字，按空行拆成段落（界面按段落渲染）
+      paragraphs: data.answer
+        .split(/\n{2,}/)
+        .map((p) => p.trim())
+        .filter(Boolean),
+      // 依据仍用本地引擎算的——那是从盘上直接取的，比让模型复述可靠
+      basis: [
+        ...local.basis,
+        `由 ${data.model ?? '模型'} 生成（读上面这些盘面事实，未自行推算）`,
+      ],
+      provider: 'model',
+    };
+  } catch {
+    // 网络问题也不该让用户问不了问题
+    return local;
+  }
 }

@@ -65,7 +65,9 @@ export default function ChenTeacherPanel({
   onClose,
   onAction,
 }: Props) {
-  const [messages, setMessages] = useState<{ role: 'user' | 'chen'; text: string; basis?: string[] }[]>([]);
+  const [messages, setMessages] = useState<
+    { role: 'user' | 'chen'; text: string; basis?: string[]; provider?: 'local' | 'model' }[]
+  >([]);
   const [noteText, setNoteText] = useState(savedNote ?? '');
   const [noteSaved, setNoteSaved] = useState(Boolean(savedNote));
   const [thinking, setThinking] = useState(false);
@@ -116,7 +118,12 @@ export default function ChenTeacherPanel({
       setQuota(getAskQuota());
       setMessages((prev) => [
         ...prev,
-        { role: 'chen', text: answer.paragraphs.join('\n\n'), basis: answer.basis },
+        {
+          role: 'chen',
+          text: answer.paragraphs.join('\n\n'),
+          basis: answer.basis,
+          provider: answer.provider,
+        },
       ]);
     } catch {
       setMessages((prev) => [
@@ -288,7 +295,9 @@ export default function ChenTeacherPanel({
                 <p className="mb-1 text-xs font-medium text-ink-3">
                   陈老师
                   <span className="ml-1.5 font-normal text-ink-3/70">
-                    （读你的盘回答，不是通用话术）
+                    {m.provider === 'model'
+                      ? '（由模型读你的盘生成，未自行推算）'
+                      : '（本地引擎读你的盘生成）'}
                   </span>
                 </p>
               )}

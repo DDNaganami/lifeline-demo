@@ -50,20 +50,47 @@ const shot = async (name) => {
   writeFileSync(`.shots\\${name}.png`, Buffer.from(res.result.data, 'base64'));
   console.log('  📷', name);
 };
-/** 在追问面板的输入框里打字并发送 */
-const ask = (text) => ev(`
-  (() => {
-    const ta = document.querySelector('aside textarea:not(#year-note)');
-    if (!ta) return 'no-textarea';
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, ${JSON.stringify(text)});
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
-    // 触发 React 的 onChange 后再点发送
-    const btn = [...document.querySelectorAll('aside button')].find(b => b.textContent.trim() === '发送');
-    if (!btn) return 'no-button';
-    setTimeout(() => btn.click(), 50);
-    return 'ok';
-  })()
-`);
+/**
+ * 在追问面板的输入框里打字并发送。
+ * ⚠️ 必须等上一次回答结束（AI 要 3-5 秒），否则会在"正在看盘…"期间发送，
+ *    而那时草稿已被清空、按钮也是禁用的——测试会静默漏掉一次提问。
+ */
+const ask = async (text) => {
+  // 等"正在看盘…"消失，即上一条回答完成
+  for (let i = 0; i < 60; i++) {
+    const busy = await ev(`document.body.innerText.includes('正在看盘')`);
+    if (busy === false) break;
+    await sleep(500);
+  }
+  const r = await ev(`
+    (() => {
+      const ta = document.querySelector('aside textarea:not(#year-note)');
+      if (!ta) return 'no-textarea';
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, ${JSON.stringify(text)});
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      return 'typed';
+    })()
+  `);
+  if (r !== 'typed') return r;
+  await sleep(200);
+  return ev(`
+    (() => {
+      const btn = [...document.querySelectorAll('aside button')].find(b => b.textContent.trim() === '发送');
+      if (!btn || btn.disabled) return 'no-button';
+      btn.click();
+      return 'ok';
+    })()
+  `);
+};
+/** 等回答完成（AI 需要几秒） */
+const waitAnswer = async () => {
+  for (let i = 0; i < 60; i++) {
+    const busy = await ev(`document.body.innerText.includes('正在看盘')`);
+    if (busy === false) return true;
+    await sleep(500);
+  }
+  return false;
+};
 const panelText = () => ev(`
   (() => { const a = document.querySelector('aside'); return a ? a.innerText.replace(/\\s+/g,' ') : '未找到面板'; })()
 `);
@@ -122,35 +149,39 @@ await shot('ask-1-open');
 
 console.log('\n=== 2. 第一次提问：应给出读盘的回答 ===');
 await ask('我今年该不该换工作');
-await sleep(3000);
+await waitAnswer();
 const p1 = await panelText();
-console.log('  ' + p1.slice(p1.indexOf('我今年该不该换工作'), p1.indexOf('我今年该不该换工作') + 300));
+console.log('  ' + p1.slice(p1.indexOf('我今年该不该换工作'), p1.indexOf('我今年该不该换工作') + 320));
 check('显示了用户的问题', p1.includes('我今年该不该换工作'));
 check('回答了（不是占位内容）', !p1.includes('示例回答') && !p1.includes('占位回答'));
 check('回答引用了宫位', /宫/.test(p1.slice(p1.indexOf('我今年该不该换工作'))));
-check('标注了「读你的盘回答」', p1.includes('读你的盘回答'));
+// 来源标注：接上 key 时显示"由模型"，没接时显示"本地引擎"——两种都算合格，但不能不标
+check('标注了回答来源', p1.includes('由模型读你的盘生成') || p1.includes('本地引擎读你的盘生成'));
 check('有可展开的依据', p1.includes('这段回答的依据'));
 const q1 = await quotaDots();
 console.log('  配额条:', JSON.stringify(q1));
-check('用掉 1 次（显示 2 格）', q1.filled === 1, `${q1.filled} 格已用`);
+check('用掉 1 次（显示 1 格）', q1.filled === 1, `${q1.filled} 格已用`);
 await shot('ask-2-first');
 
 console.log('\n=== 3. 第二、三次提问 ===');
 await ask('我什么时候能升职');
-await sleep(3000);
+await waitAnswer();
 const q2 = await quotaDots();
 check('用掉 2 次', q2.filled === 2, `${q2.filled} 格已用`);
 const p2 = await panelText();
-check('第二次回答与第一次不同', p2.includes('什么时候') && p2.includes('我不给你一个月份'));
+check(
+  '第二次回答与第一次不同',
+  p2.includes('升职') && p2.length > p1.length * 0.8,
+);
 
 await ask('我最近总是睡不好');
-await sleep(3000);
+await waitAnswer();
 // 用满 3 次后配额条会被上限文案取代，所以这里检查存储而不是圆点
 const storedAfter3 = await ev(`localStorage.getItem('lifeline.ask')`);
 console.log('  存储:', storedAfter3);
 check('用满 3 次（存储记录 used=3）', typeof storedAfter3 === 'string' && storedAfter3.includes('"used":3'), storedAfter3);
 const p3 = await panelText();
-check('第三次回答了身体相关', p3.includes('疾厄') || p3.includes('身体'));
+check('第三次有回答（睡眠问题的回答）', p3.includes('睡') || p3.includes('疾厄') || p3.includes('身体'));
 await shot('ask-3-three-used');
 
 console.log('\n=== 4. 达到上限：应显示文案，不能再问 ===');

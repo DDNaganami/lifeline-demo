@@ -32,6 +32,12 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# 示例文件要进仓库（它不含真 key，只是说明要填哪些变量）
+!.env.example
+
+# 密钥绝对不进仓库——仓库是公开的
+*.key
+secrets.json
 
 # vercel
 .vercel

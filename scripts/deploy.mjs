@@ -16,6 +16,8 @@ import { resolve } from 'node:path';
 const IP = '112.111.47.239';
 const SSH_PORT = '25573';
 const PUBLIC_URL = 'http://112.111.47.239:25572';
+/** 环境变量文件（含 API key）。**不进 git、不进 zip，单独 scp 上去** */
+const ENV_FILE = resolve('.env');
 
 function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', stdio: 'pipe', ...opts });
@@ -80,10 +82,32 @@ step(2, '打包');
 const pkgDir = resolve('deploy/LifeLine-演示站');
 const zipPath = resolve('deploy/LifeLine-演示站.zip');
 
-// 用最新的 out/ 覆盖包内产物
+/**
+ * ⚠️ 打包目录里**不能留副本**。
+ *
+ * 这里踩过一个坑：原来只把新的 out/ 覆盖进打包目录，
+ * 而 server.js 是**上一次手工放进去的旧副本**——
+ * 于是每次部署都在装旧的服务端代码，
+ * 表现是"新功能部署上去了但接口还是 404/405"。
+ *
+ * 现在改成：**两个产物每次都从权威源刷新**，
+ * 保证"打包目录 = 当前构建 + 当前服务端代码"。
+ */
 const outDir = resolve(pkgDir, 'out');
 if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true });
 localPs(`Copy-Item -Recurse -Force '${resolve('out')}' '${outDir}'`);
+
+const serverSrc = resolve('deploy/server.js');
+const serverDst = resolve(pkgDir, 'server.js');
+localPs(`Copy-Item -Force '${serverSrc}' '${serverDst}'`);
+
+// 自检：打出来的 server.js 必须与源文件一致（大小相同）
+if (!existsSync(serverDst) || statSync(serverDst).size !== statSync(serverSrc).size) {
+  console.error('❌ 打包目录里的 server.js 与源文件不一致，已中止');
+  process.exit(1);
+}
+console.log(`server.js 已刷新（${Math.round(statSync(serverSrc).size / 1024)} KB，与源文件一致）`);
+
 if (existsSync(zipPath)) rmSync(zipPath, { force: true });
 const zip = localPs(
   `Compress-Archive -Path '${pkgDir}\\*' -DestinationPath '${zipPath}' -CompressionLevel Optimal`,
@@ -98,6 +122,19 @@ console.log(`打包完成：${sizeKb} KB`);
 
 /* ---------------- 3. 上传 ---------------- */
 step(3, '上传到服务器');
+
+/**
+ * 先做密钥泄漏检查——**这是公开仓库，宁可多花 2 秒**。
+ * 检查不通过就中止，绝不把密钥推上去。
+ */
+const secrets = run('node', ['scripts/check-secrets.mjs']);
+if (secrets.code !== 0) {
+  console.error(secrets.out);
+  console.error('\n❌ 密钥检查未通过，已中止部署（请先处理上面列出的问题）');
+  process.exit(1);
+}
+console.log('密钥检查：通过（仓库里没有密钥）');
+
 const up = run('scp', [
   '-O', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20',
   '-P', SSH_PORT, zipPath, `administrator@${IP}:C:/LifeLine/demo.zip`,
@@ -109,6 +146,28 @@ if (up.code !== 0) {
 }
 console.log('上传完成');
 
+/**
+ * 单独上传 .env（**不进 zip、不进 git**）。
+ *
+ * ⚠️ 两个刻意的设计：
+ *   1. .env 放在部署包里会让它进入版本控制的历史——不行
+ *   2. 不把 key 当命令行参数传（会进进程列表）；用文件传输
+ *   3. 下面**不打印 .env 的内容**，只说"已上传"
+ */
+if (existsSync(ENV_FILE)) {
+  const upEnv = run('scp', [
+    '-O', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20',
+    '-P', SSH_PORT, ENV_FILE, `administrator@${IP}:C:/LifeLine/LifeLine-Demo/.env`,
+  ]);
+  if (upEnv.code === 0) {
+    console.log('配置文件 .env 已上传（内容不打印）');
+  } else {
+    console.log('⚠️ .env 上传失败——追问会退回本地回答引擎（其他功能不受影响）');
+  }
+} else {
+  console.log('本地没有 .env —— 服务器上的追问会使用本地回答引擎');
+}
+
 /* ---------------- 4. 服务器上解压并重启 ---------------- */
 step(4, '解压并重启服务');
 const deploy = runPs(`
@@ -116,12 +175,19 @@ $tmp = 'C:\\LifeLine\\_extract'
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Expand-Archive -Path C:\\LifeLine\\demo.zip -DestinationPath $tmp -Force
 if (-not (Test-Path "$tmp\\out\\index.html")) { Write-Host 'FAIL: 解压后找不到 out'; exit 1 }
+# 先停服务，否则 node 占着文件会让覆盖静默失败（踩过这个坑）
+Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
 Remove-Item 'C:\\LifeLine\\LifeLine-Demo\\out' -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item "$tmp\\out" 'C:\\LifeLine\\LifeLine-Demo\\out' -Recurse -Force
 Copy-Item "$tmp\\server.js" 'C:\\LifeLine\\LifeLine-Demo\\server.js' -Force
+# 自检：服务端代码必须是新的（含追问接口），否则说明又装了旧副本
+$srv = Get-Content 'C:\\LifeLine\\LifeLine-Demo\\server.js' -Raw
+Write-Host "SERVER_HAS_ASK=$($srv -match 'api/ask')"
+if (-not ($srv -match 'api/ask')) { Write-Host 'FAIL: 部署的 server.js 是旧版'; exit 1 }
+$envText = if (Test-Path 'C:\\LifeLine\\LifeLine-Demo\\.env') { Get-Content 'C:\\LifeLine\\LifeLine-Demo\\.env' -Raw } else { '' }
+Write-Host "HAS_ENV_KEY=$($envText -match 'DS_KEY')"
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
-Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
 Start-ScheduledTask -TaskName 'LifeLineDemo'
 Start-Sleep -Seconds 7
 $ok = [bool](Get-NetTCPConnection -LocalPort 18080 -State Listen -ErrorAction SilentlyContinue)
@@ -137,19 +203,59 @@ if (!deploy.out.includes('LISTEN=True')) {
   console.error('\n❌ 服务器上服务未监听，请检查');
   process.exit(1);
 }
+if (deploy.out.includes('SERVER_HAS_ASK=True')) {
+  console.log('服务端代码自检：含追问接口 ✅');
+} else {
+  console.error('\n❌ 部署的 server.js 不含追问接口（可能又装了旧副本）');
+  process.exit(1);
+}
+if (deploy.out.includes('HAS_ENV_KEY=True')) {
+  console.log('配置文件自检：服务器上有 DS_KEY ✅（不打印内容）');
+} else {
+  console.log('⚠️ 服务器上没有 DS_KEY —— 追问会使用本地回答引擎');
+}
 
 /* ---------------- 5. 外网验证 ---------------- */
 step(5, '从外网验证');
-const pages = ['/', '/dashboard/', '/ambient/', '/changelog/'];
+const pages = ['/', '/birth/', '/today/', '/dashboard/', '/ambient/', '/changelog/'];
 let allOk = true;
 for (const p of pages) {
-  const r = localPs(
-    `try { $r = Invoke-WebRequest '${PUBLIC_URL}${p}' -UseBasicParsing -TimeoutSec 20; Write-Output $r.StatusCode } catch { Write-Output 'FAIL' }`,
-  );
-  const status = r.out.trim();
+  /**
+   * 带重试：公网请求偶发抖动是正常的，
+   * 一次超时就报"部署失败"是误报——会让真正的问题被噪音淹没。
+   */
+  let status = 'FAIL';
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const r = localPs(
+      `try { $r = Invoke-WebRequest '${PUBLIC_URL}${p}' -UseBasicParsing -TimeoutSec 30; Write-Output $r.StatusCode } catch { Write-Output 'FAIL' }`,
+    );
+    status = r.out.trim();
+    if (status === '200') break;
+    if (attempt < 3) {
+      console.log(`  ${PUBLIC_URL}${p} → ${status}（第 ${attempt} 次，重试…）`);
+      await new Promise((r2) => setTimeout(r2, 1500));
+    }
+  }
   const ok = status === '200';
   if (!ok) allOk = false;
   console.log(`  ${ok ? '✅' : '❌'} ${PUBLIC_URL}${p} → ${status}`);
+}
+
+/* 追问接口：确认服务端真的接上了模型（这一步会花掉一次调用） */
+const askProbe = localPs(
+  `try {
+     $body = '{"question":"测试","contextPrompt":"盘面事实：2026年"}'
+     $r = Invoke-WebRequest '${PUBLIC_URL}/api/ask' -Method Post -Body $body -ContentType 'application/json' -UseBasicParsing -TimeoutSec 40
+     Write-Output $r.Content
+   } catch { Write-Output 'FAIL' }`,
+);
+const askText = askProbe.out;
+if (askText.includes('"ok":true')) {
+  console.log('  ✅ /api/ask → 模型已接通');
+} else if (askText.includes('no-key')) {
+  console.log('  ⚠️ /api/ask → 未配置 key（追问会用本地回答引擎）');
+} else {
+  console.log('  ⚠️ /api/ask → 未按预期响应（网页会自动降级到本地引擎，不影响其他功能）');
 }
 
 console.log(`\n${'='.repeat(56)}`);
