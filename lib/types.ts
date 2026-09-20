@@ -82,8 +82,14 @@ export interface YearCardData {
   daxian: string;
   phase: string;
   trend: Trend;
-  /** 一句主判断，现实语言 */
+  /** 一句主判断，现实语言（**由真实排盘生成**，见 lib/judgment.ts） */
   mainJudgment: string;
+  /**
+   * 主判断的依据（每一条都能追到排盘上）。
+   * 有了它，用户和懂行的人都能看出这句话是从哪来的——
+   * 而不是"感觉像抽了一句文案"。
+   */
+  judgmentBasis?: string[];
   /** 3-6 个按主次排列的可验证事件 */
   events: { text: string; priority: number }[];
   /** 折叠区里的紫微信号 */

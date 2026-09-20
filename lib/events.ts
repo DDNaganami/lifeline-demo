@@ -162,26 +162,163 @@ export const EVENT_POOL: Record<string, PalaceEvents> = {
  *   原因是父母宫权重高就被优先选中了，但那条和财富毫无关系。
  *   用户会立刻觉得"内容在乱讲"。
  */
+/**
+ * 儿童（≤12 岁）的独立事件池
+ * ---------------------------------------------------------------
+ * 为什么不能只靠"替换成人词"：
+ *   换掉"上级→老师"之后，剩下的句子仍然是「适合把重要的事定下来」
+ *   「个人节奏变顺，做事比往年省力」——这些话对一个 3 岁的孩子毫无意义。
+ *   **必须用一套真正属于童年的句子**。
+ *
+ * 孩子能对照的四类事：家里人、身体、学东西、同学关系。
+ */
+const CHILD_EVENT_POOL: Record<'family' | 'health' | 'learning', PalaceEvents> = {
+  family: {
+    good: [
+      { soft: '家里这一年比较托着你，照顾你的人有余力', direct: '爸妈这一年有更多时间陪你' },
+      { soft: '和家里人的关系比往年亲近', direct: '和爸妈的相处明显变好' },
+      { soft: '家里添了让你高兴的变化', direct: '家里有了新的变化（搬家、添人、换环境）' },
+      { soft: '长辈这一年对你格外有耐心', direct: '爷爷奶奶或外公外婆这一年带你的时间变多' },
+    ],
+    bad: [
+      { soft: '家里的事比较占人手，你可能要被交给别人照看', direct: '爸妈这一年很忙，你被托给长辈或别人照看的时间变多' },
+      { soft: '家里的气氛时紧时松，你会比较敏感', direct: '家里有过一段紧张的日子，你会感觉到' },
+      { soft: '照顾你的方式有调整，需要一点时间适应', direct: '换了照顾你的人，或者换了住的地方' },
+      { soft: '大人这一年比较累，陪你的时间会少一点', direct: '爸妈工作忙，陪你的时间明显减少' },
+    ],
+  },
+  health: {
+    good: [
+      { soft: '这一年身体底子打得好，吃得下睡得香', direct: '这一年长得快、精神足，很少生病' },
+      { soft: '精力比往年足，爱跑爱动', direct: '运动能力明显进步，精力旺盛' },
+      { soft: '作息规律，身体状态稳定', direct: '这一年的作息很好，身体一直不错' },
+      { soft: '个子或体力有明显的成长', direct: '这一年明显长高长壮了' },
+    ],
+    bad: [
+      { soft: '这一年身体上要多留意，容易反复感冒或过敏', direct: '这一年生病次数比往年多' },
+      { soft: '肠胃或睡眠容易出小状况', direct: '有小毛病反复（肠胃、过敏、睡眠）' },
+      { soft: '换季时容易不舒服，注意保暖', direct: '换季那段时间容易生病' },
+      { soft: '精力不足的时候比较多，别把日程排太满', direct: '有一段时间总是没精神' },
+    ],
+  },
+  learning: {
+    good: [
+      { soft: '学东西比较顺，对某件事的兴趣会明显起来', direct: '这一年对某样东西特别着迷' },
+      { soft: '这一年在新环境里适应得快', direct: '换了班级或学校，很快就交到朋友' },
+      { soft: '有一件你能做好的事被大人注意到了', direct: '某方面的天赋被老师或家人发现' },
+      { soft: '和同学相处得比往年顺', direct: '这一年交到了关系很好的朋友' },
+    ],
+    bad: [
+      { soft: '专注力容易被分散，需要大人帮着定节奏', direct: '上课或做功课时容易走神' },
+      { soft: '换环境时适应得慢一点，需要多些耐心', direct: '换了班级或学校，有一段时间不太适应' },
+      { soft: '和同学之间会有些小摩擦', direct: '和同学闹过矛盾' },
+      { soft: '被要求的事情变多，会有点吃力', direct: '功课或课外班变多，觉得累' },
+    ],
+  },
+};
+
+/** 儿童维度 → 用哪一类童年事件 */
+const CHILD_DIMENSION_POOL: Record<DimensionKey, 'family' | 'health' | 'learning'> = {
+  overall: 'family',
+  career: 'learning', // 孩子没有职业，对应的是"学东西"
+  wealth: 'learning', // 也没有收入，同样归到成长
+  marriage: 'family', // 没有伴侣，对应的是"和家里人"
+  parents: 'family',
+  health: 'health',
+};
+
+/** 儿童事件池的"主宫位"命名（用于来源标注） */
+const CHILD_POOL_SOURCE: Record<'family' | 'health' | 'learning', string> = {
+  family: '家庭',
+  health: '身体',
+  learning: '成长',
+};
+
+/**
+ * 措辞兜底：万一个别句子漏了成人词，这里再换一次。
+ * （正常路径不会用到——儿童走的是独立事件池，这里只是保险）
+ */
+const CHILD_REWRITE: [RegExp, string][] = [
+  [/上级|合作方|合伙人/g, '老师'],
+  [/岗位|职位/g, '日常安排'],
+  [/加班|工作量/g, '功课'],
+  [/收入|进项|资金|现金流|加杠杆|投资/g, '零花钱'],
+  [/伴侣|另一半|两个人/g, '家里人'],
+];
+
+/**
+ * 儿童（≤12 岁）没有职业、收入、伴侣。
+ * 当某一维度落在这个年龄段的空缺领域时，改用**童年事件池**——
+ * 说的都是孩子能对照的事（家里人、身体、学东西、同学）。
+ *
+ * ⚠️ 这是踩过两次的坑：
+ *   第一次是主判断（给 3 岁写职业决策），第二次是事件列表
+ *   （给 3 岁写「与上级或合作方在方向上出现分歧」）。两处都必须做年龄适配。
+ */
+const CHILD_EMPTY_DIMENSIONS: DimensionKey[] = ['career', 'wealth', 'marriage'];
+
 export function buildPalaceEvents(
   palaceImpacts: { palace: string; mutagen: string; polarity: Polarity; weight: number }[],
   dimension: DimensionKey,
   tone: EventTone,
   maxCount: number,
   seed: string,
+  /** 年龄：≤12 岁时改用儿童事件池 */
+  age?: number,
 ): EventItem[] {
-  const primaryPalace = DIMENSION_PALACE[dimension];
+  const isChild = typeof age === 'number' && age <= 12;
+  const effectiveDimension: DimensionKey =
+    isChild && CHILD_EMPTY_DIMENSIONS.includes(dimension) ? 'overall' : dimension;
+  const primaryPalace = DIMENSION_PALACE[effectiveDimension];
   const out: EventItem[] = [];
   const used = new Set<string>();
+
+  /** 儿童语境下再做一次措辞兜底 */
+  const localize = (text: string) => {
+    if (!isChild) return text;
+    let t = text;
+    for (const [re, rep] of CHILD_REWRITE) t = t.replace(re, rep);
+    return t;
+  };
+
+  /**
+   * 儿童走独立的池子：**不掺任何成人句子**。
+   * 方向仍由真实排盘决定（四化落宫算出的吉凶），只是换了一套说法。
+   */
+  if (isChild) {
+    const bucket = CHILD_DIMENSION_POOL[dimension];
+    // 用该维度对应的真实影响定方向；取不到就用整体影响
+    const relevant = palaceImpacts.filter((i) => i.palace === primaryPalace);
+    const list = relevant.length > 0 ? relevant : palaceImpacts;
+    const good = list.filter((i) => i.polarity === 'good').reduce((s, i) => s + i.weight, 0);
+    const bad = list.filter((i) => i.polarity === 'bad').reduce((s, i) => s + i.weight, 0);
+    const polarity: Polarity = good >= bad ? 'good' : 'bad';
+    const pool = CHILD_EVENT_POOL[bucket][polarity];
+
+    for (let i = 0; i < pool.length && out.length < maxCount; i++) {
+      const idx = stableIndex(`${seed}|child|${bucket}|${polarity}|${i}`, pool.length);
+      const item = pool[idx];
+      if (!item) continue;
+      const text = tone === 'soft' ? item.soft : item.direct;
+      if (used.has(text)) continue;
+      used.add(text);
+      out.push({
+        text,
+        priority: out.length + 1,
+        source: { palace: CHILD_POOL_SOURCE[bucket], mutagen: polarity === 'good' ? '吉' : '凶' },
+      });
+    }
+    return out;
+  }
 
   const addFrom = (palace: string, polarity: Polarity, mutagen: string): boolean => {
     const pool = EVENT_POOL[palace]?.[polarity];
     if (!pool) return false;
-    // 遍历池子（而不是随机取一条），避免重复与取空
     for (let k = 0; k < pool.length; k++) {
       const idx = stableIndex(`${seed}|${palace}|${mutagen}|${k}`, pool.length);
       const item = pool[idx];
       if (!item) continue;
-      const text = tone === 'soft' ? item.soft : item.direct;
+      const text = localize(tone === 'soft' ? item.soft : item.direct);
       if (used.has(text)) continue;
       used.add(text);
       out.push({
@@ -242,7 +379,7 @@ export function buildPalaceEvents(
   // 相关宫位补充（放在最后，且同样只按净方向取一边）
   const relatedPalaces = [...new Set(
     palaceImpacts
-      .filter((i) => i.palace !== primaryPalace && PALACE_IS_RELEVANT(dimension, i.palace))
+      .filter((i) => i.palace !== primaryPalace && PALACE_IS_RELEVANT(effectiveDimension, i.palace))
       .map((i) => i.palace),
   )];
   for (const palace of relatedPalaces) {

@@ -85,8 +85,27 @@ export default function YearCard({
 
       {/* 主判断 */}
       <div className="mt-4">
-        <p className="text-xs font-medium tracking-wide text-ink-3">主判断</p>
+        <p className="text-xs font-medium tracking-wide text-ink-3">
+          主判断
+          <span className="ml-2 font-normal text-ink-3/80">由排盘生成</span>
+        </p>
         <p className="mt-1.5 text-lg leading-relaxed text-ink">{card.mainJudgment}</p>
+
+        {/* 依据：让用户看得出这句话是从哪来的，而不是"像抽了一句文案" */}
+        {card.judgmentBasis && card.judgmentBasis.length > 0 && (
+          <details className="mt-2.5">
+            <summary className="cursor-pointer text-xs text-ink-3 transition hover:text-ink-2">
+              这句话是怎么来的？⌄
+            </summary>
+            <ul className="mt-2 space-y-1 rounded-lg border border-line bg-paper px-3 py-2.5">
+              {card.judgmentBasis.map((b) => (
+                <li key={b} className="text-xs leading-relaxed text-ink-2">
+                  · {b}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </div>
 
       {/* 可验证事件 */}

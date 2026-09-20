@@ -13,6 +13,7 @@ import ReviewedYears, { type ReviewedYear } from '@/components/reviewed-years';
 import YearCard from '@/components/year-card';
 import { buildYearSignals, buildYearOffsets, directionLabel } from '@/lib/signals';
 import { buildPalaceEvents, type EventTone } from '@/lib/events';
+import { buildJudgment } from '@/lib/judgment';
 import { buildSystemResponse, responseBasis } from '@/lib/response';
 import {
   buildLifeLine,
@@ -245,6 +246,7 @@ function DashboardBody({
       eventTone,
       maxCount,
       `${birth.birthDate}|${point.year}|${dimension}|${eventTone}`,
+      point.age,
     );
     return evs.length >= 3
       ? {
@@ -254,6 +256,23 @@ function DashboardBody({
       : cardWithSignals;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- cardWithSignals 由 signals 派生，signals 已在依赖里
   }, [signals, dimension, eventTone, point.year, point.age, birth.birthDate]);
+  /**
+   * 主判断：**由真实排盘生成**，不再从文案池里抽。
+   * 这是产品逻辑自洽的最后一环——判断、事件、依据现在同源。
+   *
+   * 必须排在 cardWithEvents 之后（它是在事件版卡片上再换掉判断）。
+   */
+  const cardWithJudgment = useMemo(() => {
+    if (!signals) return cardWithEvents;
+    const j = buildJudgment({
+      dimension,
+      age: point.age,
+      year: point.year,
+      signals,
+      trend: card.trend,
+    });
+    return { ...cardWithEvents, mainJudgment: j.text, judgmentBasis: j.basis };
+  }, [signals, dimension, point.age, point.year, card.trend, cardWithEvents]);
 
   const key = `${point.year}:${dimension}`;
   const currentFeedback: FeedbackType | undefined = feedbackMap[key]?.feedback;
@@ -345,10 +364,11 @@ function DashboardBody({
       signals,
       materialCount: historyList.length + archiveEntries.length,
       timeConfident: birth.birthTimeConfidence !== 'unknown' && !birth.birthTime.includes('不确定'),
-      mainJudgment: card.mainJudgment,
+      // 用**排盘生成的主判断**，而不是卡片的初始文案——回应要和用户看到的判断一致
+      mainJudgment: cardWithJudgment.mainJudgment,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- historyList/archiveEntries 由 feedbackMap/notes 派生
-  }, [currentFeedback, point.year, point.age, dimension, signals, birth, card.mainJudgment]);
+  }, [currentFeedback, point.year, point.age, dimension, signals, birth, cardWithJudgment.mainJudgment]);
 
   function handleOpenPanel() {
     setSuggestion(undefined);
@@ -702,7 +722,7 @@ function DashboardBody({
             ))}
           </div>
           <YearCard
-            card={cardWithEvents}
+            card={cardWithJudgment}
             dimension={dimension}
             feedback={currentFeedback}
             note={currentNoteText}
@@ -770,7 +790,7 @@ function DashboardBody({
         open={panelOpen}
         year={point.year}
         dimension={dimension}
-        card={card}
+        card={cardWithJudgment}
         feedback={currentFeedback}
         history={historyList}
         suggestion={suggestion}
