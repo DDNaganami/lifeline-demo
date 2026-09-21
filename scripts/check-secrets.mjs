@@ -162,5 +162,58 @@ if (existsSync('.env.example')) {
   console.log('  ⚠️ 缺少 .env.example（别人不知道要配哪些变量）');
 }
 
+/**
+ * 第 6 项：**git 历史里不能有密钥**。
+ *
+ * 为什么必须有这一项：2026-09-21 的事故里，密钥**已经提交进去了**——
+ * 只看工作区是查不出来的（工作区当时看起来是干净的，
+ * 因为那行代码长得像"占位符"）。**历史才是真正危险的地方**：
+ * 一旦推上去，密钥就等于公开了，删掉当前文件也没用。
+ */
+console.log('\n=== 6. git 历史里不能有密钥（最关键的一项）===');
+try {
+  const revs = execSync('git rev-list --all', { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+    .split('\n')
+    .filter(Boolean);
+  if (revs.length === 0) {
+    console.log('  （还没有提交，跳过）');
+  } else {
+    // 用 git grep 在所有提交里找密钥样式（比逐个 checkout 快得多）
+    let historyHits = [];
+    for (const { name, re } of PATTERNS) {
+      try {
+        // -E 用扩展正则；-I 跳过二进制文件
+        const pattern = re.source.replace(/\\b/g, '').replace(/^\^|\$$/g, '');
+        const out = execSync(`git grep -I -n -E "${pattern}" ${revs.join(' ')}`, {
+          encoding: 'utf8',
+          maxBuffer: 64 * 1024 * 1024,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        historyHits = historyHits.concat(
+          out
+            .split('\n')
+            .filter(Boolean)
+            // 允许"占位写法"命中（如文档里的 sk-xxxx），但不允许长随机串
+            .filter((line) => !ALLOWLIST.some((a) => line.includes(a))),
+        );
+      } catch {
+        /* git grep 没匹配到会返回非 0，正常 */
+      }
+    }
+    if (historyHits.length > 0) {
+      console.log(`  ❌ git 历史里有 ${historyHits.length} 处疑似密钥：`);
+      for (const h of historyHits.slice(0, 5)) console.log(`     ${h.slice(0, 160)}`);
+      console.log('     处理：');
+      console.log('       1) 立刻在服务商后台**作废这个 key**（历史清理不能撤回已泄漏的 key）');
+      console.log('       2) 用 git filter-repo 清理历史，再 force push');
+      problems += historyHits.length;
+    } else {
+      console.log(`  ✅ ${revs.length} 个提交的完整历史里没有密钥`);
+    }
+  }
+} catch (e) {
+  console.log(`  ⚠️ 无法检查 git 历史：${e.message}`);
+}
+
 console.log(`\n=== ${problems === 0 ? '✅ 通过：没有密钥泄漏风险' : `❌ 发现 ${problems} 处问题，push 前必须处理`} ===`);
 process.exit(problems > 0 ? 1 : 0);
