@@ -180,7 +180,7 @@ try {
   } else {
     // 用 git grep 在所有提交里找密钥样式（比逐个 checkout 快得多）
     let historyHits = [];
-    for (const { name, re } of PATTERNS) {
+    for (const { re } of PATTERNS) {
       try {
         // -E 用扩展正则；-I 跳过二进制文件
         const pattern = re.source.replace(/\\b/g, '').replace(/^\^|\$$/g, '');

@@ -10,7 +10,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, rmSync, statSync, readdirSync } from 'node:fs';
+import { existsSync, rmSync, statSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const IP = '112.111.47.239';
@@ -180,12 +180,22 @@ console.log('上传完成');
 /**
  * 单独上传 .env（**不进 zip、不进 git**）。
  *
- * ⚠️ 两个刻意的设计：
+ * ⚠️ 三个刻意的设计：
  *   1. .env 放在部署包里会让它进入版本控制的历史——不行
  *   2. 不把 key 当命令行参数传（会进进程列表）；用文件传输
  *   3. 下面**不打印 .env 的内容**，只说"已上传"
+ *
+ * ⚠️ 上传前**去掉 BOM**：Windows 上不少工具（包括 PowerShell 的 `-Encoding UTF8`）
+ *    写文件会加 UTF-8 BOM，导致服务端按行解析时第一行的键变成 `\uFEFFDS_KEY`，
+ *    **匹配不上 → 静默变成"没配 key"**——服务照常启动，只是追问悄悄退回本地引擎。
+ *    服务端的解析器已经能容忍 BOM，但这里先去掉更干净。
  */
 if (existsSync(ENV_FILE)) {
+  const envText = readFileSync(ENV_FILE, 'utf8');
+  if (envText.charCodeAt(0) === 0xfeff) {
+    writeFileSync(ENV_FILE, envText.slice(1), 'utf8');
+    console.log('配置文件：已去掉开头 BOM');
+  }
   const upEnv = run('scp', [
     '-O', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20',
     '-P', SSH_PORT, ENV_FILE, `administrator@${IP}:C:/LifeLine/LifeLine-Demo/.env`,

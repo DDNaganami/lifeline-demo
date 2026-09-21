@@ -42,7 +42,15 @@ function loadEnv() {
   ];
   for (const file of candidates) {
     try {
-      const text = fs.readFileSync(file, 'utf8');
+      let text = fs.readFileSync(file, 'utf8');
+      /**
+       * ⚠️ 必须去掉 BOM。
+       * Windows 上很多工具（包括 PowerShell 的 `-Encoding UTF8`）写文件时会加
+       * UTF-8 BOM（\uFEFF）。不去掉的话，第一行的键会变成 `\uFEFFDS_KEY`，
+       * **匹配不上 DS_KEY，静默变成"没配 key"**——服务照常启动，
+       * 只是追问悄悄退回本地引擎，很难发现。
+       */
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
       for (const rawLine of text.split(/\r?\n/)) {
         const line = rawLine.trim();
         if (!line || line.startsWith('#')) continue;
@@ -67,6 +75,24 @@ const DS_MAX_TOKENS = Number(ENV.DS_MAX_TOKENS || 3000);
 /** 服务端兜底限流：防止有人绕开前端直接打接口 */
 const ASK_PER_IP_DAILY = Number(ENV.ASK_PER_IP_DAILY || 15);
 const ASK_TIMEOUT_MS = Number(ENV.ASK_TIMEOUT_MS || 60000);
+
+/**
+ * ⚠️ 模型白名单（安全措施，2026-09-21 加）。
+ *
+ * 背景：那次 key 泄漏后，有人拿它去刷**高价的 pro 模型**，花掉了一百元。
+ * 模型选择权在调用方手里——**key 一旦泄漏，攻击者想用哪个模型就用哪个**。
+ *
+ * 所以这里加一道约束：**本站只允许用便宜的那一档**。
+ * 即使有人改了 .env 里的 DS_MODEL，或者以后误配，也上不去 pro。
+ * 要真的换模型，得改这个数组——那是一次有意识的代码改动，会进 git 记录。
+ */
+const ALLOWED_MODELS = ['deepseek-flash'];
+const EFFECTIVE_MODEL = ALLOWED_MODELS.includes(DS_MODEL) ? DS_MODEL : ALLOWED_MODELS[0];
+if (DS_MODEL !== EFFECTIVE_MODEL) {
+  console.warn(
+    `[安全] .env 里的模型「${DS_MODEL}」不在白名单内，已强制使用「${EFFECTIVE_MODEL}」`,
+  );
+}
 
 /* ------------------------- 静态文件 ------------------------- */
 
@@ -350,7 +376,7 @@ async function handleAsk(req, res, started) {
       method: 'POST',
       headers: { Authorization: `Bearer ${DS_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: DS_MODEL,
+        model: EFFECTIVE_MODEL,
         messages,
         // ⚠️ 推理模型的思维链也吃 token，预算给足，否则 content 会是空的
         max_tokens: DS_MAX_TOKENS,
@@ -524,7 +550,8 @@ server.listen(PORT, HOST, () => {
   console.log(`  追问接口：   POST /api/ask`);
   if (DS_KEY) {
     // 只报"配没配"和模型名，**绝不打印 key**
-    console.log(`  AI 追问：    已启用（${DS_MODEL}，max_tokens=${DS_MAX_TOKENS}）`);
+    console.log(`  AI 追问：    已启用（${EFFECTIVE_MODEL}，max_tokens=${DS_MAX_TOKENS}）`);
+    console.log(`               模型白名单：${ALLOWED_MODELS.join('、')}（防止误用高价模型）`);
   } else {
     console.log('  AI 追问：    未启用（没读到 DS_KEY，网页会退回本地回答引擎）');
     console.log('               要启用：复制 .env.example 为 .env 并填上 DS_KEY');

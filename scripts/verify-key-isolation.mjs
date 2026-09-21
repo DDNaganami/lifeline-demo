@@ -8,19 +8,21 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { execSync } from 'node:child_process';
 
-let pass = 0;
+/** 这个脚本只关心"有没有问题"，所以只累计 fail；通过数没有用途 */
 let fail = 0;
 function check(name, ok, extra = '') {
   console.log(`  ${ok ? '✅' : '❌'} ${name}${extra ? '  → ' + extra : ''}`);
-  if (ok) pass++;
-  else fail++;
+  if (!ok) fail++;
 }
 
-/* 从 .env 读出 key（只用于比对，不打印） */
-const envText = readFileSync('.env', 'utf8');
+/* 从 .env 读出 key（只用于比对，不打印）。
+   ⚠️ 要先去 BOM——Windows 上不少工具写文件会带 UTF-8 BOM，
+      否则第一行的键会变成 \uFEFFDS_KEY，匹配不上，检查会误报"没有配置"。 */
+let envText = readFileSync('.env', 'utf8');
+if (envText.charCodeAt(0) === 0xfeff) envText = envText.slice(1);
 const m = envText.match(/^DS_KEY=(.+)$/m);
 if (!m) {
-  console.error('❌ .env 里没有 DS_KEY');
+  console.error('❌ .env 里没有 DS_KEY（检查一下文件开头有没有 BOM，或键名拼错了）');
   process.exit(1);
 }
 const KEY = m[1].trim();
