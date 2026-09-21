@@ -34,13 +34,15 @@ const PATTERNS = [
   { name: 'Bearer 后面跟长串', re: /Bearer\s+[A-Za-z0-9_-]{20,}/ },
 ];
 
-/** 明确允许出现的占位写法（文档、示例里说明格式用） */
-const ALLOWLIST = [
-  'sk-xxxx',
-  'sk-...',
-  'DS_KEY=',
-  'sk-REDACTED-REVOKED'.replace(/./g, ''),
-];
+/**
+ * 明确允许出现的**占位写法**（文档、示例里说明格式用）。
+ *
+ * ⚠️ 这个数组里只能放"显然不是真 key"的片段。
+ *    曾经在这里写了一串真实密钥（想做白名单），
+ *    **结果是把密钥明文写进了这个检查脚本本身，并推到了公开仓库**。
+ *    教训：防泄漏的脚本自己也要按"会被公开"来写。
+ */
+const ALLOWLIST = ['sk-xxxx', 'sk-...', 'sk-你的key', 'DS_KEY=', 'token=***'];
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
